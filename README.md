@@ -1,6 +1,10 @@
 # GhosalQuant
 Ghosal Fund | Quantitative Trading Team Repository
 
+## System Overview
+
+Go to [the system design overview](design/system-overview.md) for full details.
+
 ## Tom's Notes
 
 ### What are we actually trying to do?
