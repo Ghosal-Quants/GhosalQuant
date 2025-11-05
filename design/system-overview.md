@@ -48,11 +48,16 @@
 
 ## Possible MVP Backtesting & Execution System
 
-## Component Diagram
+### Component Diagram
 <p align="center">
   <img src="diagrams/minimal_trading_system.png" alt="Minimal Trading System Diagram" width="600">
   <br>
   <em>Figure 1: Minimal Backtesting & Execution System.</em>
 </p>
 
-
+### Alex B.'s Diagram (slightly modified)
+<p align="center">
+  <img src="diagrams/alex-b-s-system.png" alt="Alex B.'s System Diagram" width="200">
+  <br>
+  <em>Figure 2: Alex B.'s System Diagram.</em>
+</p>

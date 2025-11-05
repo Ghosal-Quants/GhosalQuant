@@ -1,0 +1,30 @@
+@startuml
+title Alex B.'s Backtesting System
+
+skinparam rectangle {
+  BackgroundColor White
+  BorderColor Black
+  RoundCorner 10
+}
+
+skinparam arrowThickness 1.0
+skinparam nodesep 20
+skinparam ranksep 20
+skinparam shadowing false
+
+cloud "API / Data Source(s)" as DataSrc
+rectangle "Requests / Sessions / WebSockets" as Conn
+rectangle "Parser\n(combine data sources)" as Parser
+rectangle "Data Format\n(e.g. DataFrame)" as DF
+rectangle "Strategy\nstrategy(df: DataFrame)-> DataFrame" as Strat
+rectangle "Evaluation System\n(check for win/loss)" as Eval
+rectangle "Reporting System\n(display results)" as Report
+
+DataSrc -down-> Conn
+Conn -down-> Parser
+Parser -down-> DF
+DF -down-> Strat
+Strat -down-> Eval
+Eval -down-> Report
+
+@enduml
