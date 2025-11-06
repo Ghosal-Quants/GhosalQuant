@@ -1,0 +1,52 @@
+@startuml
+title Minimal Trading System
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam arrowThickness 1.5
+skinparam nodesep 10
+skinparam ranksep 10
+
+package "Execution System" {
+  [Data Parser]
+  [Strategy]
+  [Event Handler]
+}
+
+package "Data Layer" {
+  [DataSource]
+  [LocalDataSource]
+  [ReplayDataSource]
+  [StreamingDataSource]
+}
+
+package "Backtester" {
+  [Data bank/cache]
+  [Sample(s) (Sliding window/stream)]
+  [Evaluation System]
+}
+
+package "Reporting System" {
+  [Graphs / Tables / Charts]
+  [CSV / Console Logging]
+}
+
+' Wiring
+[DataSource] <|-- [LocalDataSource]
+[DataSource] <|-- [ReplayDataSource]
+[DataSource] <|-- [StreamingDataSource]
+
+[StreamingDataSource] --> [Data bank/cache]
+[DataSource] --> [Data Parser] : data in
+[Data Parser] --> [Strategy]
+[Strategy] --> [Event Handler] : Event Trigger
+
+' Backtester
+[Data bank/cache] --> [Sample(s) (Sliding window/stream)]
+[Sample(s) (Sliding window/stream)] --> [ReplayDataSource] : feeds
+[Event Handler] --> [Evaluation System]
+
+' Reporting
+[Evaluation System] --> [Graphs / Tables / Charts]
+[Evaluation System] --> [CSV / Console Logging]
+@enduml
