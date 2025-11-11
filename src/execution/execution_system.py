@@ -1,12 +1,15 @@
-from src.data_layer.data import DataSource
-from strategy_base import Strategy
+# from src.data_layer.data import DataSource
+# from strategy_base import Strategy
+
+from data_layer.data import DataSource
+from execution.strategy_base import Strategy
 
 class ExecutionSystem:
     def __init__(
             self,
             data_source: DataSource,
             strategy: Strategy,
-            signal_destination, # TODO: Define type
+            signal_destination=None, # TODO: Define type
 
     ) -> None:
         self.data_source = data_source
@@ -16,7 +19,9 @@ class ExecutionSystem:
     async def run(self) -> None:
         self.strategy.on_start()
 
-        async for bar in self.data_source:
-            ...
+        async for bar in self.data_source.__aiter__():
+            self.strategy.on_market_data(bar)
 
         self.strategy.on_end()
+
+

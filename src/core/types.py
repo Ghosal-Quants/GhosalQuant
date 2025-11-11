@@ -15,3 +15,6 @@ class Bar:
 class Signal: # TODO: expand
     time_stamp: datetime
     symbol: str
+
+    signal_type: str
+    confidence: float

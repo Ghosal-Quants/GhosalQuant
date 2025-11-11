@@ -1,0 +1,41 @@
+from execution.strategy_base import Strategy
+from core.types import Bar, Signal
+from datetime import datetime
+
+
+class ExampleStrategy(Strategy):
+    '''
+    A simple example strat that generates signals based on the previous closing price:
+        - if current bar closes higher than previous -> SELL signal
+        - if current bar closes lower than previous -> BUY signal
+    * this is just a minimal implementation to exemplify how the interface would be used
+    '''
+    def __init__(self):
+        self.prev_bar: Bar | None = None
+
+    def on_start(self):
+        print("Strategy started.")
+        self.prev_bar = None
+
+    def on_end(self):
+        print("Strategy finished.")
+
+    def on_market_data(self, bar: Bar) -> Signal | None:
+        if self.prev_bar is None:
+            self.prev_bar = bar
+            return None  
+
+        signal_type = None
+        self.prev_bar = bar
+
+        if bar.close > self.prev_bar.close:
+            signal_type = "SELL"
+        elif bar.close < self.prev_bar.close:
+            signal_type = "BUY"
+
+        print("Signal Type: ", signal_type, ", Timestamp: ", bar.time_stamp, ", Symbol: ", bar.symbol, "Confidence: ", 1)
+
+        if signal_type is None:
+            return None
+
+        return Signal(time_stamp=datetime.now(), symbol=bar.symbol, signal_type=signal_type, confidence=1.0)
