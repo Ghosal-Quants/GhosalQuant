@@ -23,9 +23,8 @@ def load_config() -> dict[str, str]:
     except yaml.YAMLError as exc:
         print(f"Error parsing YAML file: {exc}")
         return None
-
-if __name__ == "__main__":
-
+    
+def run():
     # Load user's config file 
     config_dict: dict[str, str] = load_config()
 
@@ -35,10 +34,12 @@ if __name__ == "__main__":
 
 
     # Now we have user settings we can download data 
-    df: pd.Dataframe = get_data_df(config_dict)
+    df: pd.DataFrame = get_data_df(config_dict)
 
 
     print("user config loaded successfully")
 
+    pass 
 
-    pass
+if __name__ == "__main__":
+    run()
