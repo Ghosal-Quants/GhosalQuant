@@ -1,6 +1,5 @@
 from execution.strategy_base import Strategy
-from core.types import Bar, Signal
-from datetime import datetime
+from core.types import Bar, Signal, SignalType
 
 
 class ExampleStrategy(Strategy):
@@ -25,17 +24,19 @@ class ExampleStrategy(Strategy):
             self.prev_bar = bar
             return None  
 
-        signal_type = None
         prev = self.prev_bar
+        signal_type: SignalType | None = None
 
         if bar.close > prev.close:
-            signal_type = "SELL"
+            signal_type = SignalType.SELL
         elif bar.close < prev.close:
-            signal_type = "BUY"
-
-        if signal_type is not None:
-            print("Signal Type: ", signal_type, ", Timestamp: ", bar.time_stamp, ", Symbol: ", bar.symbol, "Confidence: ", 1)
+            signal_type = SignalType.BUY
         else:
+            self.prev_bar = bar
             return None
 
-        return Signal(time_stamp=datetime.now(), symbol=bar.symbol, signal_type=signal_type)
+        self.prev_bar = bar
+
+        print("Signal Type: ", signal_type, ", Timestamp: ", bar.time_stamp, ", Symbol: ", bar.symbol, "Confidence: ", 1)
+
+        return Signal(time_stamp=bar.time_stamp, symbol=bar.symbol, signal_type=signal_type)

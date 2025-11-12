@@ -28,4 +28,3 @@ class DataSource(Protocol):
                 volume=float(row["Volume"].item()),
             )
             yield bar
-            await asyncio.sleep(0.1)

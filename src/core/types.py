@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
+from enum import Enum
 
 @dataclass(frozen=True)
 class Bar:
@@ -12,7 +13,9 @@ class Bar:
     close: float
     volume: float
 
-SignalType = Literal['BUY', 'SELL']
+class SignalType(str, Enum):
+    BUY = 'BUY'
+    SELL = 'SELL'
 
 @dataclass(frozen=True)
 class Signal:
