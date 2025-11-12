@@ -1,6 +1,9 @@
 import yaml
 from pathlib import Path 
 import sys
+import pandas as pd
+
+from data.get_data_script import get_data_df
 
 def load_config() -> dict[str, str]:
     """Loads and parses user's config file"""
@@ -21,16 +24,21 @@ def load_config() -> dict[str, str]:
         print(f"Error parsing YAML file: {exc}")
         return None
 
-
 if __name__ == "__main__":
 
     # Load user's config file 
-    if load_config() is None:
-        sys.exit()
+    config_dict: dict[str, str] = load_config()
 
-    
+    # if we could not load user settings - something is super wrong 
+    if config_dict is None:
+        sys.exit(1)
 
-    # Parse user config 
+
+    # Now we have user settings we can download data 
+    df: pd.Dataframe = get_data_df(config_dict)
+
+
+    print("user config loaded successfully")
 
 
     pass
