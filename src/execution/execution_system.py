@@ -1,27 +1,29 @@
-# from src.data_layer.data import DataSource
-# from strategy_base import Strategy
-
+from core.types import Signal
 from data_layer.data import DataSource
 from execution.strategy_base import Strategy
+from execution.sinks import SignalSink, PrintSink
+from data_layer.data import DataSource
 
 class ExecutionSystem:
     def __init__(
             self,
-            data_source: DataSource,
+            data_src: DataSource,
             strategy: Strategy,
-            signal_destination=None, # TODO: Define type
-
+            signal_destination: SignalSink | None = None
     ) -> None:
-        self.data_source = data_source
+
+        self.data_src = data_src
         self.strategy = strategy
-        self.signal_destination = signal_destination # Backtester / Broker
+        self.sig_sink = signal_destination or PrintSink() # Backtester / Broker - Print by default
 
     async def run(self) -> None:
         self.strategy.on_start()
 
-        async for bar in self.data_source.__aiter__():
-            self.strategy.on_market_data(bar)
-
-        self.strategy.on_end()
-
-
+        try:
+            async for bar in self.data_src:
+                # Event handling
+                signal: Signal | None = self.strategy.on_market_data(bar)
+                if signal is not None:
+                    await self.sig_sink.on_signal(signal)
+        finally:
+            self.strategy.on_end()

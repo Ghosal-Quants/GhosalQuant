@@ -37,6 +37,4 @@ class ExampleStrategy(Strategy):
 
         self.prev_bar = bar
 
-        print("Signal Type: ", signal_type, ", Timestamp: ", bar.time_stamp, ", Symbol: ", bar.symbol, "Confidence: ", 1)
-
         return Signal(time_stamp=bar.time_stamp, symbol=bar.symbol, signal_type=signal_type)

@@ -24,3 +24,15 @@ class Signal:
     signal_type: SignalType
     confidence: float = 1.0
     price: float | None = None
+
+    def __str__(self) -> str:
+        return (
+            "Signal Type: " + str(self.signal_type.value)
+            +", Timestamp: " + str(self.time_stamp)
+            +", Symbol: " + self.symbol
+            +", Confidence: " + str(self.confidence)
+            +(", Price: " + str(self.price) if self.price is not None else "")
+        )
+
+    def __repr__(self) -> str:
+        return str(self)
