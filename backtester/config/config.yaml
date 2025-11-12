@@ -1,0 +1,24 @@
+# ------------------------------------------------
+# General System Settings
+# ------------------------------------------------
+SYSTEM:
+  # The location of the historical data files
+  data_path: "./data/EURUSD_2022-2024.csv"
+  # The timeframe for the main data (e.g., H1, M30, D1)
+  main_timeframe: "H1"
+  # The timeframe for execution/signal checks (e.g., M5)
+  execution_timeframe: "M5"
+  # Use multiprocessing for faster testing
+  use_multiprocessing: True
+  # Number of CPU cores to dedicate to the process
+  num_processes: 4
+
+# ------------------------------------------------
+# Test Period and Range
+# ------------------------------------------------
+TIME_RANGE:
+  start_date: "2023-01-01"
+  end_date: "2024-06-30"
+  # Time window for daily trading (e.g., 9:00 to 17:00 UTC)
+  session_start_time: "09:00"
+  session_end_time: "17:00"
