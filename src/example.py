@@ -6,7 +6,7 @@ import asyncio
 if __name__ == "__main__":
     print("Example Implementation: ")
     
-    # startegy receives market data and produces buy/sell signal
+    # strategy receives market data and produces buy/sell signal
     strategy = ExampleStrategy()
     
     # this is a sample implementation of what the data source could look like
@@ -16,12 +16,12 @@ if __name__ == "__main__":
 
     # ExecutionSystem coordinates the backtesting loop:
     #   - fetches historical data
-    #   - feeds it into the startegy
+    #   - feeds it into the strategy
     #   - TODO: redirect the signals to a) RiskManger or b) Backtester
     execution = ExecutionSystem(data_source=data, strategy=strategy)
 
     # ExecutionSystem.run() is an async routine so it must be run
-    # with asyincio.run() to start the event loop
+    # with asyncio.run() to start the event loop
     asyncio.run(execution.run())
 
 

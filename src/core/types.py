@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Literal
 
 @dataclass(frozen=True)
 class Bar:
@@ -11,10 +12,12 @@ class Bar:
     close: float
     volume: float
 
+SignalType = Literal['BUY', 'SELL']
+
 @dataclass(frozen=True)
-class Signal: # TODO: expand
+class Signal:
     time_stamp: datetime
     symbol: str
-
-    signal_type: str
-    confidence: float
+    signal_type: SignalType
+    confidence: float = 1.0
+    price: float | None = None

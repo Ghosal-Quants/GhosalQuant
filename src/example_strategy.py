@@ -26,16 +26,16 @@ class ExampleStrategy(Strategy):
             return None  
 
         signal_type = None
-        self.prev_bar = bar
+        prev = self.prev_bar
 
-        if bar.close > self.prev_bar.close:
+        if bar.close > prev.close:
             signal_type = "SELL"
-        elif bar.close < self.prev_bar.close:
+        elif bar.close < prev.close:
             signal_type = "BUY"
 
-        print("Signal Type: ", signal_type, ", Timestamp: ", bar.time_stamp, ", Symbol: ", bar.symbol, "Confidence: ", 1)
-
-        if signal_type is None:
+        if signal_type is not None:
+            print("Signal Type: ", signal_type, ", Timestamp: ", bar.time_stamp, ", Symbol: ", bar.symbol, "Confidence: ", 1)
+        else:
             return None
 
-        return Signal(time_stamp=datetime.now(), symbol=bar.symbol, signal_type=signal_type, confidence=1.0)
+        return Signal(time_stamp=datetime.now(), symbol=bar.symbol, signal_type=signal_type)

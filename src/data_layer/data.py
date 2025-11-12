@@ -1,5 +1,3 @@
-# from src.core.types import Bar
-
 from core.types import Bar
 from typing import Protocol, AsyncIterable
 import yfinance as yf
@@ -31,4 +29,3 @@ class DataSource(Protocol):
             )
             yield bar
             await asyncio.sleep(0.1)
-
