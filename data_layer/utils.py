@@ -14,7 +14,7 @@ class ParquetManager:
         """Save a DataFrame to a Parquet file named after the ticker."""
         path = os.path.join(self.base_path, f"{ticker}.parquet")
         df.to_parquet(path, index=False)
-        print(f"✅ Saved {len(df)} rows for {ticker} to {path}")
+        print(f" Saved {len(df)} rows for {ticker} to {path}")
 
     def load(self, ticker):
         """Load a Parquet file for a given ticker."""
