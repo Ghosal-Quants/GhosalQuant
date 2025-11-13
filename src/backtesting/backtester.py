@@ -17,3 +17,10 @@ class Backtester:
     async def handle_signal(self, signal) -> None: ...
 
     def run(self): ...
+
+
+
+
+
+
+
