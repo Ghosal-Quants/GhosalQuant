@@ -2,6 +2,7 @@ import yaml
 from pathlib import Path 
 import sys
 import pandas as pd
+from core.backtester import Backtester
 
 from data.get_data_script import get_data_df
 
@@ -27,6 +28,7 @@ def load_config() -> dict[str, str]:
 def run():
     # Load user's config file 
     config_dict: dict[str, str] = load_config()
+    print("User config loaded successfully")
 
     # if we could not load user settings - something is super wrong 
     if config_dict is None:
@@ -36,8 +38,13 @@ def run():
     # Now we have user settings we can download data 
     df: pd.DataFrame = get_data_df(config_dict)
 
+    # Create an instance of the backtester
+    bt = Backtester(df)
 
-    print("user config loaded successfully")
+    # run the backtest
+    bt.run_backtest()
+
+
 
     pass 
 
