@@ -1,9 +1,8 @@
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal
 from enum import Enum
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Bar:
     time_stamp: datetime
     symbol: str
@@ -16,8 +15,9 @@ class Bar:
 class SignalType(str, Enum):
     BUY = 'BUY'
     SELL = 'SELL'
+    NOOP = 'NOOP' # No Operation (Hold) - Optional instead of `None`
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Signal:
     time_stamp: datetime
     symbol: str
@@ -27,10 +27,10 @@ class Signal:
 
     def __str__(self) -> str:
         return (
-            "Signal Type: " + str(self.signal_type.value)
-            +", Timestamp: " + str(self.time_stamp)
-            +", Symbol: " + self.symbol
-            +", Confidence: " + str(self.confidence)
+            f"Signal Type: {self.signal_type.value}, "
+            +f"Timestamp: {self.time_stamp}, "
+            +f"Symbol: {self.symbol}, "
+            +f"Confidence: {self.confidence}"
             +(", Price: " + str(self.price) if self.price is not None else "")
         )
 
