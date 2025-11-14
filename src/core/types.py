@@ -36,3 +36,22 @@ class Signal:
 
     def __repr__(self) -> str:
         return str(self)
+
+@dataclass
+class Trade:
+    symbol: str
+    signal_type: SignalType | None
+    entry_price: float
+    size: float
+    open_time: datetime
+    close_time: datetime | None = None
+    realised_pnl: float | None = None
+
+    def unrealised_pnl(self, current_price: float) -> float:
+        # PnL is not applicable for trades where no operation was performed
+        if self.signal_type not in (SignalType.BUY, SignalType.SELL):
+            return 0.0
+
+        # sign of pnl for BUY is always +1 (win), for SELL is always -1 (win)
+        sign: int = 1 if self.signal_type is SignalType.BUY else -1
+        return sign * (current_price - self.entry_price) * self.size
