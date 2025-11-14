@@ -3,15 +3,17 @@
 # ------------------------------------------------
 SYSTEM:
   # The location of the historical data files
-  data_path: "./data/EURUSD_2022-2024.csv"
+  target: "AAPL"
   # The timeframe for the main data (e.g., H1, M30, D1)
   main_timeframe: "H1"
   # The timeframe for execution/signal checks (e.g., M5)
   execution_timeframe: "M5"
   # Use multiprocessing for faster testing
-  use_multiprocessing: True
+  # use_multiprocessing: True
   # Number of CPU cores to dedicate to the process
-  num_processes: 4
+  # num_processes: 4
+  # do we want fresh candles downloaded?
+  fresh_candles = True
 
 # ------------------------------------------------
 # Test Period and Range
