@@ -5,10 +5,11 @@ from typing import Dict, Any
 def get_data_df(config_dict: dict[str, str]) -> pd.DataFrame:
     """load some data and return a dataframe"""
 
-    # Download raw data based on user config 
-    candle_data: Dict[str, Any] = download_candles(config_dict)
+    # If user defines fresh candles = download data 
+    if config_dict["fresh_candles"]:
+        candle_data: Dict[str, Any] = download_candles(config_dict)
 
-    # Load the data from where it was downloaded
+    # oad the data from where it was downloaded
     candle_data: Dict[str, Any] = load_data(config_dict)
 
     # parse raw data into a dataframe
