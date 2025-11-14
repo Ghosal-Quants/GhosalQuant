@@ -1,12 +1,13 @@
 from backtester.backtester import Backtester
+from core.types import SignalType
 import asyncio
 
 class ExampleBacktester(Backtester):
-    async def handle_signal(self, signal):
+    async def handle_signal(self, signal: SignalType) -> None:
         # Dummy implementation
         print(f"[BACKTESTER]: {signal}")
 
-    def run(self):
+    def run(self) -> None:
         # ExecutionSystem coordinates the backtesting loop:
         #   - fetches historical data
         #   - feeds it into the strategy
