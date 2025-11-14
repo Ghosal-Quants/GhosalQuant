@@ -1,4 +1,4 @@
-from backtesting.backtester import Backtester
+from backtester.backtester import Backtester
 import asyncio
 
 class ExampleBacktester(Backtester):
