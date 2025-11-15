@@ -12,11 +12,11 @@ class DataFrameDataSource(DataSource):
             *,
             symbol: str,
             timestamp_col: str | None = None,
-            open_col: str = "open",
-            high_col: str = "high",
-            low_col: str = "low",
-            close_col: str = "close",
-            volume_col: str = "volume",
+            open_col: str = "Open",
+            high_col: str = "High",
+            low_col: str = "Low",
+            close_col: str = "Close",
+            volume_col: str = "Volume",
     ) -> None:
         self.df = dataframe
         self.symbol = symbol
