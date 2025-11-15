@@ -1,10 +1,21 @@
+from typing import Callable
+import pandas as pd
 
+# Define the type of the function being passed in:
+# It takes two floats as arguments, and returns a float.
+strategy_func = Callable[[pd.DataFrame], pd.DataFrame]
 
 
 class Backtester:
-    def __init__(self, df):
+    def __init__(self, df, strategy: strategy_func):
         self.df = df
+        self.strategy = strategy
+        
+        # prepare the data 
         self.prepare_data()
+
+        # apply strategy
+        self.apply_strategy()
 
 
     def prepare_data(self):
@@ -22,7 +33,14 @@ class Backtester:
     def apply_strategy(self):
         """
         Apply strategy to self.df
+        
+        Should give back a df with BUY/SELL
         """
+
+        # Apply the function - do we need to copy?
+        self.df = self.strategy(self.df.copy())
+
+        
         
         pass
 
