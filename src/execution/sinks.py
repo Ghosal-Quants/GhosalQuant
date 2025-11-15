@@ -6,7 +6,7 @@ class SignalSink(Protocol):
 
 class PrintSink(SignalSink):
     async def on_signal(self, signal: Signal) -> None:
-        print(f"Received signal: {signal}")
+        print(f"[PrintSink]: {signal}")
 
 class BacktesterSink(SignalSink):
     def __init__(self, backtester) -> None:

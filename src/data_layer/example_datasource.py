@@ -1,22 +1,54 @@
 from core.types import Bar
 from data_layer.data import DataSource
+from datetime import datetime, timedelta
 from typing import AsyncIterable
 import yfinance as yf
 import asyncio
 
-class ExampleDataSource(DataSource):
-    def __init__(self, symbol: str = "^GSPC"):
+class YFinanceDataSource(DataSource):
+    def __init__(
+            self,
+            symbol: str,
+            *,
+
+            # --- Multiple init options ---
+            # 1. Pass datetimes
+            start: str | datetime | None = None,
+            end: str | datetime | None = None,
+
+            # 2. Pass Y/M/D as integers
+            start_year: int | None = None,
+            start_month: int | None = None,
+            start_day: int | None = None,
+
+            end_year: int | None = None,
+            end_month: int | None = None,
+            end_day: int | None = None
+    ) -> None:
         self.symbol = symbol
 
+        # Find start datetime
+        if start is not None:
+            self.start = start
+        elif None not in (start_year, start_month, start_day):
+            self.start = datetime(year=start_year, month=start_month, day=start_day)
+        else: # Default to last 30 days if no start is provided
+            self.start = datetime.now() - timedelta(days=30)
+
+        # Find end datetime
+        if end is not None:
+            self.end = end
+        elif None not in (end_year, end_month, end_day):
+            self.end = datetime(year=end_year, month=end_month, day=end_day)
+        else: # Default to now if no end is provided
+            self.end = datetime.now()
+
     async def __aiter__(self) -> AsyncIterable[Bar]:
-        year = 2020
-        month = 1
-        start = f"{year}-{month:02d}-01"
-        end = f"{year}-{month:02d}-28"
+        print(
+            f"Fetching {self.symbol} data from {self.start:%Y-%m-%d} to {self.end:%Y-%m-%d}..."
+        )
 
-        print(f"Fetching {self.symbol} data from {start} to {end}...")
-
-        data = yf.download(self.symbol, start=start, end=end, progress=False, auto_adjust=True)
+        data = yf.download(self.symbol, start=self.start, end=self.end, progress=False, auto_adjust=True)
         
         for ts, row in data.iterrows():
             bar = Bar(
