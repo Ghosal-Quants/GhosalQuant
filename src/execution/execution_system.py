@@ -3,6 +3,11 @@ from data_layer.data import DataSource
 from execution.strategy_base import Strategy
 from execution.sinks import SignalSink, PrintSink
 
+# ExecutionSystem coordinates the backtesting loop:
+#   - receives data
+#   - feeds it into the strategy
+#   - TODO: redirect the signals to a RiskManger or Broker
+
 class ExecutionSystem:
     def __init__(
             self,

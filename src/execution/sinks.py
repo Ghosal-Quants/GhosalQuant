@@ -15,6 +15,14 @@ class BacktesterSink(SignalSink):
     async def on_signal(self, signal: Signal) -> None:
         await self.backtester.handle_signal(signal)
 
+class DataFrameSink(SignalSink):
+    def __init__(self, dataframe) -> None:
+        self.dataframe = dataframe
+
+    async def on_signal(self, signal: Signal) -> None:
+        raise NotImplementedError("DataFrameSink is not implemented yet.")
+
+
 class BrokerSink(SignalSink):
     async def on_signal(self, signal: Signal) -> None:
         raise NotImplementedError("BrokerSink is not implemented yet.")
@@ -22,6 +30,3 @@ class BrokerSink(SignalSink):
 class RiskManagerSink(SignalSink):
     async def on_signal(self, signal: Signal) -> None:
         raise NotImplementedError("RiskManager is not implemented yet.")
-
-
-
