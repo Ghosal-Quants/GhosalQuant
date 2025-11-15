@@ -1,28 +1,60 @@
 import pandas as pd
 
-# ***Gemini code***
 def example_strategy(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Applies a simple test strategy:
+    Applies a simple test strategy with defined Stop Loss (SL) and Take Profit (TP).
+    
     BUY signal (1) if Close > Previous Close.
     SELL signal (-1) if Close < Previous Close.
     Otherwise, signal is 0.
+
+    SL is fixed at 1.0% and TP at 2.0% of the entry price.
     """
+    
+    # 1. Generate the simple BUY/SELL signals
+    # ======================================
     
     # Calculate the change in price
     df['Price_Change'] = df['Close'].diff()
     
-    # Generate the BUY/SELL signals
-    # BUY (1) if the price change is positive
-    df['BUY'] = (df['Price_Change'] > 0).astype(int)
+    # Create a unified SIGNAL column (1 for Buy, -1 for Sell, 0 for None)
+    df['SIGNAL'] = 0 # Default to no trade
+    df.loc[df['Price_Change'] > 0, 'SIGNAL'] = 1 # BUY (Long)
+    df.loc[df['Price_Change'] < 0, 'SIGNAL'] = -1 # SELL (Short)
     
-    # SELL (1) if the price change is negative. Using -1 for a clear distinction.
-    df['SELL'] = (df['Price_Change'] < 0).astype(int) * -1 
+    # 2. Define the SL/TP Prices
+    # ==========================
     
-    # Create a unified SIGNAL column for the backtester (1 for Buy, -1 for Sell, 0 for None)
-    df['SIGNAL'] = df['BUY'] + df['SELL'] 
+    # Define the fixed percentage values
+    SL_PERCENT = 0.010  # 1.0% Stop Loss
+    TP_PERCENT = 0.020  # 2.0% Take Profit (1:2 R:R Ratio)
+
+    # Initialize SL and TP columns
+    df['SL'] = 0.0
+    df['TP'] = 0.0
     
-    # Clean up temporary columns
-    df.drop(columns=['Price_Change', 'BUY', 'SELL'], inplace=True)
+    # --- Logic for BUY (Long) Trades (SIGNAL == 1) ---
     
+    # SL is 1.0% BELOW the entry price (Close)
+    buy_sl = df['Close'] * (1 - SL_PERCENT)
+    df.loc[df['SIGNAL'] == 1, 'SL'] = buy_sl
+    
+    # TP is 2.0% ABOVE the entry price (Close)
+    buy_tp = df['Close'] * (1 + TP_PERCENT)
+    df.loc[df['SIGNAL'] == 1, 'TP'] = buy_tp
+    
+    # --- Logic for SELL (Short) Trades (SIGNAL == -1) ---
+    
+    # SL is 1.0% ABOVE the entry price (Close)
+    sell_sl = df['Close'] * (1 + SL_PERCENT)
+    df.loc[df['SIGNAL'] == -1, 'SL'] = sell_sl
+    
+    # TP is 2.0% BELOW the entry price (Close)
+    sell_tp = df['Close'] * (1 - TP_PERCENT)
+    df.loc[df['SIGNAL'] == -1, 'TP'] = sell_tp
+
+    # 3. Clean up temporary columns
+    # =============================
+    df.drop(columns=['Price_Change'], inplace=True)
+
     return df

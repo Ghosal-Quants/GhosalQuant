@@ -8,6 +8,10 @@ class Trade:
         self.running = True # all new trades we can assume are open
         self.result = 0 # the result of the trade -> 1=win, -1=loss
         self.SIGNAL = row.SIGNAL
+
+        # defined alsewhere in the strategy()
+        self.TP = row.TP
+        self.SL = row.SL
         
     def update(self, row):
         """
@@ -31,6 +35,6 @@ class Trade:
 
         pass
 
-    def close_trade(self, result: int):
+    def close_trade(self, row, result: int):
         self.running = False
         self.result = result
