@@ -2,6 +2,7 @@ from backtester import Backtester
 import pandas as pd
 
 
+
 def create_test_dataframe() -> pd.DataFrame:
     """
     define df for the sake of testing 
@@ -42,7 +43,23 @@ def test_backtester():
     # Run some assertionss on the 
 
 
+def test_prepare_data():
 
+    # define a dataframe - according to expected data 
+    test_df: pd.DataFrame = create_test_dataframe()
+
+    # instantiate Backtester object - mimic the run() function 
+    backtest_obj: Backtester = Backtester(test_df)
+
+    # Should leavbe backtester.df with an extra buy/sell ilumn 
+    backtest_obj.prepare_data()
+
+    # Check that the columns exist and are initialized to 0
+    assert 'BUY' in backtest_obj.df.columns
+    assert 'SELL' in backtest_obj.df.columns
+    # Assert that ALL values in the new columns are 0
+    assert (backtest_obj.df["BUY"] == 0).all()
+    assert (backtest_obj.df["SELL"] == 0).all()
 
 
 

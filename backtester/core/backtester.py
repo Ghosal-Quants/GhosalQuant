@@ -4,6 +4,7 @@
 class Backtester:
     def __init__(self, df):
         self.df = df
+        self.prepare_data()
 
 
     def prepare_data(self):
@@ -11,8 +12,11 @@ class Backtester:
         Will later handle the merging logic 
         """
 
+        # ADD BUY/SELL COLUMNs
+        self.df["BUY"] = 0
+        self.df["SELL"] = 0
 
-        self.apply_strategy()
+
         pass
 
     def apply_strategy(self):
