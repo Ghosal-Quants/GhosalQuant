@@ -21,7 +21,8 @@ def create_test_dataframe() -> pd.DataFrame:
     ['2025-11-15', '09:15:00', 100.90, 101.60, 100.80, 101.50],
     ['2025-11-15', '09:20:00', 101.50, 102.40, 101.30, 102.00],
     ['2025-11-15', '09:25:00', 102.00, 102.90, 101.90, 102.50],
-    ['2025-11-15', '09:30:00', 102.50, 103.10, 102.30, 102.80]
+    ['2025-11-15', '09:30:00', 102.50, 103.10, 102.30, 102.80],
+    ['2025-11-15', '09:30:00', 105.00, 103.10, 102.30, 102.80], # this is to trigger take profit
     ]
 
     # Define the column names
@@ -77,12 +78,12 @@ def test_apply_strategy():
     backtest_obj.apply_strategy()
 
     # Print the df 
-    print(f"{backtest_obj.df=}")
+    # print(f"{backtest_obj.df=}")
     
     # Check if the 'SIGNAL' column was created
     assert 'SIGNAL' in backtest_obj.df.columns
     
-    expected_signals = pd.Series([0, 1, -1, 1, 1, 1, 1], name='SIGNAL')
+    expected_signals = pd.Series([0, 1, -1, 1, 1, 1, 1, 0], name='SIGNAL')
     # Check if the generated 'SIGNAL' column matches the expected Series
     # Use numpy.testing.assert_array_equal for robust pandas Series comparison
     pd.testing.assert_series_equal(backtest_obj.df['SIGNAL'], expected_signals)
@@ -119,6 +120,8 @@ def test_run_backtest():
 
     # Run the backtest
     backtest_obj.run_backtest()
+
+    # print(f"{backtest_obj.df_results=}")
 
     # check for the df_results
     # backtest_obj.df_results
