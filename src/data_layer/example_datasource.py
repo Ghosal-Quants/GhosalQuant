@@ -1,9 +1,10 @@
 from core.types import Bar
-from typing import Protocol, AsyncIterable
+from data_layer.data import DataSource
+from typing import AsyncIterable
 import yfinance as yf
 import asyncio
 
-class ExampleDataSource(Protocol):
+class ExampleDataSource(DataSource):
     def __init__(self, symbol: str = "^GSPC"):
         self.symbol = symbol
 
