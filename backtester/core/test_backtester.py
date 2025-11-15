@@ -30,23 +30,6 @@ def create_test_dataframe() -> pd.DataFrame:
     # Create && return DataFrame object
     return pd.DataFrame(data_list, columns=columns)
 
-def test_backtester():
-    """
-    Test the use case of the Backtester class 
-    """
-
-    # define a dataframe - according to expected data 
-    test_df: pd.DataFrame = create_test_dataframe()
-
-    # instantiate Backtester object - mimic the run() function 
-    backtest_obj: Backtester = Backtester(test_df, example_strategy)
-    
-    # should output an excel file && condleplots?
-    backtest_obj.run_backtest()
-
-
-    # Run some assertionss on the 
-
 
 def test_prepare_data():
 
@@ -94,7 +77,7 @@ def test_apply_strategy():
     backtest_obj.apply_strategy()
 
     # Print the df 
-    # print(f"{backtest_obj.df=}")
+    print(f"{backtest_obj.df=}")
     
     # Check if the 'SIGNAL' column was created
     assert 'SIGNAL' in backtest_obj.df.columns
@@ -105,7 +88,37 @@ def test_apply_strategy():
     pd.testing.assert_series_equal(backtest_obj.df['SIGNAL'], expected_signals)
     
 
+def test_run_backtest():
+    """
+    Test the use case of the Backtester class 
+    """
 
+    # define a dataframe - according to expected data 
+    test_df: pd.DataFrame = create_test_dataframe()
 
+    # instantiate Backtester object - mimic the run() function 
+    backtest_obj: Backtester = Backtester(test_df, example_strategy)
 
+    # Should leavbe backtester.df with an extra buy/sell col
+    # Can assume this works by the above test....
+    backtest_obj.prepare_data()
 
+    # Assert the buy and sells exist in the updated df 
+
+    # Manually calculated expected signals (based on Close price comparison):
+    # Index 0: NaN (No previous close) -> 0
+    # Index 1: 101.20 > 100.80 -> +1 (Buy)
+    # Index 2: 100.90 < 101.20 -> -1 (Sell)
+    # Index 3: 101.50 > 100.90 -> +1 (Buy)
+    # Index 4: 102.00 > 101.50 -> +1 (Buy)
+    # Index 5: 102.50 > 102.00 -> +1 (Buy)
+    # Index 6: 102.80 > 102.50 -> +1 (Buy)
+
+    # Apply strategy
+    backtest_obj.apply_strategy()
+
+    # Run the backtest
+    backtest_obj.run_backtest()
+
+    # check for the df_results
+    # backtest_obj.df_results
