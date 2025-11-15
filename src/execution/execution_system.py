@@ -1,13 +1,13 @@
 from core.types import Signal
-from data_layer.data import DataSource
+from data_layer.example_datasource import ExampleDataSource
 from execution.strategy_base import Strategy
 from execution.sinks import SignalSink, PrintSink
-from data_layer.data import DataSource
+from data_layer.example_datasource import ExampleDataSource
 
 class ExecutionSystem:
     def __init__(
             self,
-            data_src: DataSource,
+            data_src: ExampleDataSource,
             strategy: Strategy,
             signal_destination: SignalSink | None = None
     ) -> None:

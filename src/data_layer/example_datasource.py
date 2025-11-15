@@ -3,7 +3,7 @@ from typing import Protocol, AsyncIterable
 import yfinance as yf
 import asyncio
 
-class DataSource(Protocol):
+class ExampleDataSource(Protocol):
     def __init__(self, symbol: str = "^GSPC"):
         self.symbol = symbol
 

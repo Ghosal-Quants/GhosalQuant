@@ -1,6 +1,6 @@
 from example_strategy import ExampleStrategy
-from data_layer.data import DataSource
-from example_backtester import ExampleBacktester
+from data_layer.example_datasource import ExampleDataSource
+from backtester.example_backtester import ExampleBacktester
 
 if __name__ == "__main__":
     print("Example Implementation With Backtester: ")
@@ -11,7 +11,7 @@ if __name__ == "__main__":
     # this is a sample implementation of what the data source could look like
     # DataSource is just a yfinance wrapper with hard coded variables 
     # it provides historical market data as an async iterable of Bar objects
-    data = DataSource()
+    data = ExampleDataSource()
 
     backtester = ExampleBacktester(strategy=strategy, data_src=data)
     backtester.run()

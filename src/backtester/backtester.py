@@ -1,12 +1,12 @@
 from abc import ABC, abstractmethod
 from execution.strategy_base import Strategy
 from execution.execution_system import ExecutionSystem
-from data_layer.data import DataSource
+from data_layer.example_datasource import ExampleDataSource
 from execution.sinks import BacktesterSink
 import asyncio
 
 class Backtester(ABC):
-    def __init__(self, strategy: Strategy, data_src: DataSource):
+    def __init__(self, strategy: Strategy, data_src: ExampleDataSource) -> None:
         self.strategy = strategy
         self.data_src = data_src
         self.execution_system = ExecutionSystem(
