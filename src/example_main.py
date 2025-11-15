@@ -1,6 +1,6 @@
 from datetime import datetime
 from example_strategy import ExampleStrategy
-from data_layer.example_datasource import YFinanceDataSource
+from data_layer.yfinance_datasource import YFinanceDataSource
 from backtester.example_backtester import ExampleBacktester
 
 if __name__ == "__main__":

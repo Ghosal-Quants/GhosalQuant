@@ -1,6 +1,6 @@
 from execution.execution_system import ExecutionSystem
 from example_strategy import ExampleStrategy
-from data_layer.example_datasource import YFinanceDataSource
+from data_layer.yfinance_datasource import YFinanceDataSource
 from execution.sinks import PrintSink
 import asyncio
 from datetime import datetime
