@@ -1,2 +1,10 @@
 # Ignore environment files and local stuff
 .env
+
+# Ignore data files
+data_layer/main.parquet
+data_layer/ohlcv/*.parquet
+data_store/*.parquet
+
+# Keep sample data
+!data_layer/ohlcv/sample/*.parquet
