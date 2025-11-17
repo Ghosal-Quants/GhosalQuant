@@ -1,4 +1,4 @@
-from core.types import Signal
+from core.types import Signal, SignalType
 from data_layer.data import DataSource
 from execution.strategy_base import Strategy
 from execution.sinks import SignalSink, PrintSink
@@ -27,7 +27,17 @@ class ExecutionSystem:
             async for bar in self.data_src:
                 # Event handling
                 signal: Signal | None = self.strategy.on_market_data(bar)
-                if signal is not None:
-                    await self.sig_sink.on_signal(signal)
+
+                # Strategy emitted no signal (interpreted same as SignalType.NOOP)
+                if signal is None:
+                    continue
+
+                # Strategy emitted an explicit NOOP signal
+                # (meaning "hold" / "no action")
+                if signal.signal_type is SignalType.NOOP:
+                    continue
+
+                # Actionable signal: send to sink
+                await self.sig_sink.on_signal(signal)
         finally:
             self.strategy.on_end()
