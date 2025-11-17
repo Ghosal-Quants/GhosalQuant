@@ -25,6 +25,13 @@ class Signal:
     confidence: float = 1.0
     price: float | None = None
 
+    def __post_init__(self):
+        if not (0.0 <= self.confidence <= 1.0):
+            raise ValueError("Confidence must be between 0.0 and 1.0")
+
+        if self.price is not None and not isinstance(self.price, (int, float)):
+            raise TypeError("Price must be a number or None")
+
     def __str__(self) -> str:
         return (
             f"Signal Type: {self.signal_type.value}, "
@@ -49,7 +56,7 @@ class Trade:
 
     def unrealised_pnl(self, current_price: float) -> float:
         # PnL is not applicable for trades where no operation was performed
-        if self.signal_type not in (SignalType.BUY, SignalType.SELL):
+        if self.signal_type is None or self.signal_type is SignalType.NOOP:
             return 0.0
 
         # sign of pnl for BUY is always +1 (win), for SELL is always -1 (win)
