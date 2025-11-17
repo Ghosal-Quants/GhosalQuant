@@ -4,17 +4,28 @@ import asyncio
 from execution.strategy_base import Strategy
 from execution.execution_system import ExecutionSystem
 from data_layer.data import DataSource
-from execution.sinks import BacktesterSink
+from execution.sinks import SignalSink, BacktesterSink
 from core.types import Signal
 
 class Backtester(ABC):
-    def __init__(self, strategy: Strategy, data_src: DataSource) -> None:
+    def __init__(
+            self,
+            strategy: Strategy,
+            data_src: DataSource,
+            signal_destination: SignalSink | None = None
+    ) -> None:
         self.strategy = strategy
         self.data_src = data_src
+
+        if signal_destination is None:
+            sink: SignalSink = BacktesterSink(self)
+        else:
+            sink = signal_destination
+
         self.execution_system = ExecutionSystem(
             data_src = self.data_src,
             strategy = self.strategy,
-            signal_destination = BacktesterSink(self)
+            signal_destination = sink
         )
 
     @abstractmethod
