@@ -4,7 +4,7 @@ import pandas as pd
 
 from example_strategy import ExampleStrategy
 from data_layer.dataframe_datasource import DataFrameDataSource
-from backtester.example_backtester import DataFrameBacktester
+from backtester.dataframe_backtester import DataFrameBacktester
 
 if __name__ == "__main__":
     print("Example Implementation With Backtester: ")
@@ -24,4 +24,5 @@ if __name__ == "__main__":
         close_col = "Close",
         volume_col = "Volume"
     )
-    backtester.run()
+    df2: pd.DataFrame = backtester.run()
+    print(df2)

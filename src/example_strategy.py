@@ -25,7 +25,7 @@ class ExampleStrategy(Strategy):
             return None  
 
         prev = self.prev_bar
-        signal_type: SignalType | None = None
+        signal_type: SignalType | None
 
         if bar.close > prev.close:
             signal_type = SignalType.SELL
