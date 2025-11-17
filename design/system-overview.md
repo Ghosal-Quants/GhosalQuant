@@ -126,5 +126,5 @@ objects, and only needs to consider individual bars/candles of market data.
 The flow of information through the current system is intended to be as follows:
 
 ```
-DataSource -> ExecutionSystem -> Strategy -> SignalSink (-> Backtester / Broker / ...)
+DataSource -> ExecutionSystem -> Strategy -> SignalSink(s) (-> Backtester / Broker / ...)
 ```
