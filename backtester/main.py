@@ -3,6 +3,7 @@ from pathlib import Path
 import sys
 import pandas as pd
 from core.backtester import Backtester
+from strategies.test_strategy import example_strategy
 
 from data.get_data_script import get_data_df
 
@@ -39,7 +40,8 @@ def run():
     df: pd.DataFrame = get_data_df(config_dict)
 
     # Create an instance of the backtester
-    bt = Backtester(df)
+    # pass in strat to backtester
+    bt = Backtester(df, example_strategy)
 
     # run the backtest
     bt.run_backtest()
