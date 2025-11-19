@@ -27,12 +27,14 @@ class DataFrameBacktester(Backtester):
 
             # Additional Columns
             signal_col: str = "Signal",
-            confidence_col: str = "Confidence"
+            confidence_col: str = "Confidence",
+            quantity_col: str = "Quantity"
     ) -> None:
         # Duplicate the initial DataFrame and initialise signal and confidence columns
         self._return_df = dataframe.copy()
         self._return_df[signal_col] = SignalType.NOOP.value
         self._return_df[confidence_col] = 0.0
+        self._return_df[quantity_col] = 0.0
 
         super().__init__(
             strategy=strategy,
@@ -50,7 +52,8 @@ class DataFrameBacktester(Backtester):
                 self._return_df,
                 timestamp_col= timestamp_col,
                 signal_col= signal_col,
-                confidence_col= confidence_col
+                confidence_col= confidence_col,
+                quantity_col= quantity_col
             )
         )
 

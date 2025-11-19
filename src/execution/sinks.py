@@ -1,6 +1,7 @@
 from typing import Protocol
 from core.types import Signal, SignalType
 import pandas as pd
+from dataclasses import replace
 
 class SignalSink(Protocol):
     async def on_signal(self, signal: Signal) -> None: ...
@@ -23,7 +24,8 @@ class DataFrameSink(SignalSink):
             *,
             timestamp_col: str,
             signal_col: str,
-            confidence_col: str
+            confidence_col: str,
+            quantity_col: str
     ) -> None:
         if dataframe is None:
             dataframe = pd.DataFrame(
@@ -34,6 +36,7 @@ class DataFrameSink(SignalSink):
         self._timestamp_col = timestamp_col
         self._signal_col = signal_col
         self._confidence_col = confidence_col
+        self._quantity_col = quantity_col
 
     async def on_signal(self, signal: Signal) -> None:
         # TODO: Handle cases where user wants to accumulate new rows for signals, instead of updating existing rows
@@ -52,6 +55,7 @@ class DataFrameSink(SignalSink):
 
         self._dataframe.loc[mask, self._signal_col] = signal.signal_type.value
         self._dataframe.loc[mask, self._confidence_col] = signal.confidence
+        self._dataframe.loc[mask, self._quantity_col] = signal.quantity
 
     def get_dataframe(self) -> pd.DataFrame:
         return self._dataframe
@@ -61,5 +65,28 @@ class BrokerSink(SignalSink):
         raise NotImplementedError("BrokerSink is not implemented yet.")
 
 class RiskManagerSink(SignalSink):
+    def __init__(
+            self, 
+            next_sink:SignalSink, 
+            confidence_threshold: float = 0.5, 
+            max_qty: int = 10,
+            min_qty: int = 0
+    ) -> None:
+        self._next_sink = next_sink
+        self._confidence_threshold = confidence_threshold
+        self._max_qty = max_qty
+        self._min_qty = min_qty
+    
+
     async def on_signal(self, signal: Signal) -> None:
-        raise NotImplementedError("RiskManager is not implemented yet.")
+        if signal.signal_type is SignalType.NOOP:
+            return
+        
+        if signal.confidence >= self._confidence_threshold:
+            qty = self._max_qty
+        else:
+            qty = self._min_qty
+
+        adjusted_signal = replace(signal, quantity=qty)
+
+        await self._next_sink.on_signal(adjusted_signal)

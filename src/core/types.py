@@ -1,6 +1,7 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
+from typing import Optional
 
 @dataclass(frozen=True, slots=True)
 class Bar:
@@ -24,6 +25,7 @@ class Signal:
     signal_type: SignalType
     confidence: float = 1.0
     price: float | None = None
+    quantity: Optional[float] = field(default=None)
 
     def __post_init__(self):
         if not (0.0 <= self.confidence <= 1.0):
