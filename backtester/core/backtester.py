@@ -1,6 +1,8 @@
 from typing import Callable
 import pandas as pd
 from trade import Trade
+from datetime import datetime
+from pathlib import Path
 
 # Define the type of the function being passed in:
 # It takes two floats as arguments, and returns a float.
@@ -82,14 +84,66 @@ class Backtester:
 
         # Trade.result = 1|-1
 
+        self.calc_stats()
+
         # Save the final results table to an Excel file.
-        # self.output_to_excel(self.df_results.copy())
+        self.output_to_excel()
 
 
     def output_to_excel(self):
         """
         on the tin
         """
-        pass
+        out_dir = Path("results/trades")
+
+        # save in results/trades
+        fn = f"backtest_results_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx"
+        fp = out_dir / fn
+
+        if self.df_results is not None:
+            self.df_results.to_excel(fp, index=False)
+            print("Saved results")
+        else:
+            print("No closed trades")
+    
+    def calc_stats(self):
+        """
+        calculates kpms
+        """
+
+        if self.df_results is None:
+            print("No trades")
+            return
         
+        ttl_trades = len(self.df_results)
+
+        # 1|-1
+        wins = self.df_results[self.df_results['result'] == 1]
+        losses = self.df_results[self.df_results['result'] == -1]
+
+        total_wins = len(wins)
+        total_losses = len(losses)
+
+        if ttl_trades > 0:
+            win_rate = (total_wins / ttl_trades) * 100
+        else:
+            win_rate = 0.0
+
+        # have to add more stats using pnls
+        total_pnl = self.df_results['pnl'].sum()
+
+        self.stats = {
+            "Total trades": ttl_trades,
+            "Total wins": total_wins,
+            "Total losses": total_losses,
+            "Win rate (%)": win_rate,
+            "Total pnl": total_pnl
+        }
+
+        for k,v in self.stats.items():
+            print(f"{k}: {v}")
+
+        
+        
+
 
