@@ -5,6 +5,10 @@
 data_layer/main.parquet
 data_layer/ohlcv/*.parquet
 data_store/*.parquet
+.venv/
+venv/
+__pycache__/
+*.pyc
 
 # Keep sample data
 !data_layer/ohlcv/sample/*.parquet
