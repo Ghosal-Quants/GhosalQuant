@@ -1,11 +1,11 @@
 import yaml
-from pathlib import Path 
+from pathlib import Path
 import sys
 import pandas as pd
+
 from src.compatibility.backtester import Backtester
 from src.compatibility.strategies.test_strategy import example_strategy
-
-from data.get_data_script import get_data_df
+from src.compatibility.get_data_script import get_data_df
 
 def load_config(file_path: str) -> dict[str, str]:
     """Loads and parses user's config file"""
@@ -15,9 +15,9 @@ def load_config(file_path: str) -> dict[str, str]:
     print(f"{file_path=}")
 
     # Open the config file
-    try: 
+    try:
         with open (file_path, 'r') as file:
-            config_data: dict['str', 'str'] = yaml.safe_load(file) # dict 
+            config_data: dict['str', 'str'] = yaml.safe_load(file) #  dict
         return config_data
     except FileNotFoundError:
         print(f"Error: The file {file_path} was not found.")
@@ -25,7 +25,7 @@ def load_config(file_path: str) -> dict[str, str]:
     except yaml.YAMLError as exc:
         print(f"Error parsing YAML file: {exc}")
         return None
-    
+
 def run():
     # Load user's config file 
     config_dict: dict[str, str] = load_config("config.yaml")
@@ -36,7 +36,7 @@ def run():
         sys.exit(1)
 
 
-    # Now we have user settings we can download data 
+    # Now we have user settings we can download data
     df: pd.DataFrame = get_data_df(config_dict)
 
     # Create an instance of the backtester

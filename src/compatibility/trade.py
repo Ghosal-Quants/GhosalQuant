@@ -47,7 +47,7 @@ class Trade:
         self.result = result
 
         # update when trade closes, prob have for exit price and time
-        self.exit_time = row.Name # record ts when trade is closed
+        self.exit_time = row.name # record ts when trade is closed
 
         # exit price as well
         if self.SIGNAL == BUY:

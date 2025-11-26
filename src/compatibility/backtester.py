@@ -5,6 +5,8 @@ from pathlib import Path
 
 from compatibility.trade import Trade
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
 # Define the type of the function being passed in:
 # It takes two floats as arguments, and returns a float.
 strategy_func = Callable[[pd.DataFrame], pd.DataFrame]
@@ -43,11 +45,6 @@ class Backtester:
 
         # Apply the function - do we need to copy?
         self.df = self.strategy(self.df.copy())
-
-        
-        
-        pass
-
 
     def run_backtest(self):
 
@@ -129,7 +126,9 @@ class Backtester:
         """
         on the tin
         """
-        out_dir = Path("results/trades")
+
+        out_dir = PROJECT_ROOT / "results" / "trades"
+        out_dir.mkdir(parents=True, exist_ok=True)
 
         # save in results/trades
         fn = f"backtest_results_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx"
@@ -140,6 +139,7 @@ class Backtester:
             print("Saved results")
         else:
             print("No closed trades")
+
     
     def calc_stats(self):
         """
@@ -177,8 +177,3 @@ class Backtester:
 
         for k,v in self.stats.items():
             print(f"{k}: {v}")
-
-        
-        
-
-

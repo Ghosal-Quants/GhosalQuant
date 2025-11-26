@@ -1,12 +1,8 @@
 import pandas as pd
-
-from backtester import Backtester
-
 import sys, os
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from strategies.test_strategy import example_strategy
 
-
+from src.compatibility.strategies.test_strategy import example_strategy
+from src.compatibility.backtester import Backtester
 
 def create_test_dataframe() -> pd.DataFrame:
     """
