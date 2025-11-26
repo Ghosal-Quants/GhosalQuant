@@ -31,9 +31,8 @@ class Backtester:
         """
 
         # ADD BUY/SELL COLUMNs
-        self.df["BUY"] = 0
-        self.df["SELL"] = 0
-
+        self.df_hour_data["BUY"] = 0
+        self.df_hour_data["SELL"] = 0
 
         pass
 
@@ -45,9 +44,7 @@ class Backtester:
         """
 
         # Apply the function - do we need to copy?
-        self.df = self.strategy(self.df.copy())
-
-        
+        self.df_hour_data = self.strategy(self.df_hour_data.copy())
         
         pass
 
@@ -83,13 +80,13 @@ class Backtester:
                 for ot in open_trades:
                     
                     # for long positions check if low <= sl or if high >= tp
-                    if ot.signal == 1:
+                    if ot.SIGNAL == 1:
                         if (row.Low <= ot.SL) or (row.High >= ot.TP):
                             need_to_zoom = True
                             break
                     
                     # for short positions check if high has gone above sl or if low has gone below tp
-                    elif ot.signal == -1:
+                    elif ot.SIGNAL == -1:
                         
                         if (row.High >= ot.SL) or (row.Low <= ot.TP):
                             need_to_zoom = True
@@ -101,7 +98,7 @@ class Backtester:
                     bar_end = index + one_hour # next 1 hr, can check using iloc 1 position ahead?
 
                     # also by dt index
-                    hour_sec_bars = self.df_sec_data[bar_start:bar_end]
+                    hour_sec_bars = self.df_sec_data.loc[bar_start:bar_end]
 
                     # iter through each sec in hr bar
                     for sec_index, sec_row in hour_sec_bars.iterrows():
@@ -122,23 +119,15 @@ class Backtester:
                 
                 # if we definitively know then continue
                 else:
-                    for ot in open_trades:
-                        pass
+                    pass
             
             # then continue w previous logic                
             # If a trading signal is found in the current row:
             if row.SIGNAL != 0:
                 # Start a new trade object and add it to the open list
-                open_trades.append(Trade(row))  
-            
-            # For every trade currently open:
-            for ot in open_trades:
-                # Update the trade with the current market data (checks for profit/loss targets, etc.).
-                ot.update(row)
-                # If the trade update causes it to close:
-                if ot.running == False:
-                    # Move the now closed trade to the closed list.
-                    closed_trades.append(ot)
+                # if trade open then ignore new signals
+                if len(open_trades) == 0:
+                    open_trades.append(Trade(row))  
             
             # realized pnl is sum of pnl from closed trades - update after appended
             ttl_realized_pnl = 0
@@ -187,15 +176,24 @@ class Backtester:
         """
         out_dir = Path("results/trades")
 
+        # match up data
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
         # save in results/trades
-        fn = f"backtest_results_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx"
+        fn = f"trades_{timestamp}.xlsx"
         fp = out_dir / fn
 
         if self.df_results is not None:
             self.df_results.to_excel(fp, index=False)
-            print("Saved results")
+            print(f"Saved trades to {fp}")
         else:
             print("No closed trades")
+        
+        if not self.df_equity.empty:
+            fn_equity = f"equity_{timestamp}.xlsx"
+            fp_equity = out_dir / fn_equity
+            self.df_equity.to_excel(fp_equity, index=False)
+            print(f"Saved equity to {fp_equity}")
     
     def calc_stats(self):
         """
