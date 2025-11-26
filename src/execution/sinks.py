@@ -1,17 +1,24 @@
-from typing import Protocol
+from typing import Protocol, Optional
 from core.types import Signal, SignalType
 import pandas as pd
 from dataclasses import replace
 
 class SignalSink(Protocol):
+    def __init__(self, next_sink: Optional["SignalSink"] = None):
+        self._next_sink = next_sink
+
     async def on_signal(self, signal: Signal) -> None: ...
 
 class PrintSink(SignalSink):
+    def __init__(self, next_sink: SignalSink = None):
+        super().__init__(next_sink)
+
     async def on_signal(self, signal: Signal) -> None:
         print(f"[PrintSink]: {signal}")
 
 class BacktesterSink(SignalSink):
-    def __init__(self, backtester) -> None:
+    def __init__(self, backtester, next_sink: SignalSink = None) -> None:
+        super().__init__(next_sink)
         self.backtester = backtester
 
     async def on_signal(self, signal: Signal) -> None:
@@ -20,6 +27,7 @@ class BacktesterSink(SignalSink):
 class DataFrameSink(SignalSink):
     def __init__(
             self,
+            next_sink: SignalSink = None,
             dataframe: pd.DataFrame | None = None,
             *,
             timestamp_col: str,
@@ -27,6 +35,7 @@ class DataFrameSink(SignalSink):
             confidence_col: str,
             quantity_col: str
     ) -> None:
+        super().__init__(next_sink)
         if dataframe is None:
             dataframe = pd.DataFrame(
                 columns=[timestamp_col, signal_col, confidence_col]
@@ -61,6 +70,8 @@ class DataFrameSink(SignalSink):
         return self._dataframe
 
 class BrokerSink(SignalSink):
+    def __init__(self, next_sink: SignalSink = None):
+        super().__init__(next_sink)
     async def on_signal(self, signal: Signal) -> None:
         raise NotImplementedError("BrokerSink is not implemented yet.")
 
@@ -72,7 +83,7 @@ class RiskManagerSink(SignalSink):
             max_qty: int = 10,
             min_qty: int = 0
     ) -> None:
-        self._next_sink = next_sink
+        super().__init__(next_sink)
         self._confidence_threshold = confidence_threshold
         self._max_qty = max_qty
         self._min_qty = min_qty
