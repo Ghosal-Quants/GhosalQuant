@@ -1,8 +1,9 @@
 from typing import Callable
 import pandas as pd
-from trade import Trade
 from datetime import datetime
 from pathlib import Path
+
+from compatibility.trade import Trade
 
 # Define the type of the function being passed in:
 # It takes two floats as arguments, and returns a float.
