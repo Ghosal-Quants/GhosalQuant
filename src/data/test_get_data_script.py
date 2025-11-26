@@ -3,7 +3,8 @@ import json
 from typing import Dict, Any
 import sys
 
-from src.compatibility.get_data_script import get_data_df
+# sys.path.append('../')
+from get_data_script import get_data_df
 
 def test_get_data_df():
 
@@ -11,14 +12,14 @@ def test_get_data_df():
 
     This is a gift for the data team :)
 
-    we need to agree on what our data will look like such that I can parse it correctly
+    we need to agree on what our data will look like such that i can parse it correctly
 
-    The most efficient way to do this si to write a test for this function and then write the code
+    The most effeicient way to do this si to write a test for this function and then write the code 
     to pass the test.... 
 
     We will use pytest for the testing - it should be defined in my requirements.txt for use in a virtual environment
 
-    This is what I kinda expect he raw data to look like
+    This is what i kinda expect he raw data to look like 
     I might be wrong - discuss in the meeting
 
     mock_raw_data: Dict[str, Any] = {
@@ -50,12 +51,16 @@ def test_get_data_df():
         'TIME_RANGE': {'start_date': '2023-01-01', 'end_date': '2024-06-30', 'session_start_time': '09:00', 'session_end_time': '17:00'}
     }
 
-    # function call
+    # fucntion call
     # result_df = get_data_df(user_settings)
 
     # Check the df is in the correct form 
     # assert result_df.index.name == 'time'
 
-    # Check we have the right columns
+    # Cehck we have the right columns
     # expected_cols = ['open', 'high', 'low', 'close']
     # assert list(result_df.columns) == expected_cols
+
+
+
+    pass

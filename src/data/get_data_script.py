@@ -6,7 +6,7 @@ def get_data_df(config_dict: dict[str, str]) -> pd.DataFrame:
     """load some data and return a dataframe"""
 
     # If user defines fresh candles = download data 
-    if config_dict["SYSTEM"]["fresh_candles"]:
+    if config_dict["fresh_candles"]:
         candle_data: Dict[str, Any] = download_candles(config_dict)
 
     # oad the data from where it was downloaded
@@ -14,6 +14,7 @@ def get_data_df(config_dict: dict[str, str]) -> pd.DataFrame:
 
     # parse raw data into a dataframe
     df = parse_data(candle_data)
+
 
     return df 
 
