@@ -2,16 +2,16 @@ import yaml
 from pathlib import Path 
 import sys
 import pandas as pd
-from src.compatibility.backtester import Backtester
-from src.compatibility.strategies.test_strategy import example_strategy
+from core.backtester import Backtester
+from strategies.test_strategy import example_strategy
 
 from data.get_data_script import get_data_df
 
-def load_config(file_path: str) -> dict[str, str]:
+def load_config() -> dict[str, str]:
     """Loads and parses user's config file"""
 
     # filepath should be fixed relative to the main file 
-    file_path: Path = Path(file_path).resolve()
+    file_path: Path = Path("config/config.yaml").resolve()
     print(f"{file_path=}")
 
     # Open the config file
@@ -28,7 +28,7 @@ def load_config(file_path: str) -> dict[str, str]:
     
 def run():
     # Load user's config file 
-    config_dict: dict[str, str] = load_config("config.yaml")
+    config_dict: dict[str, str] = load_config()
     print("User config loaded successfully")
 
     # if we could not load user settings - something is super wrong 
@@ -45,6 +45,10 @@ def run():
 
     # run the backtest
     bt.run_backtest()
+
+
+
+    pass 
 
 if __name__ == "__main__":
     run()

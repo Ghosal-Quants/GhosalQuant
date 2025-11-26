@@ -13,7 +13,7 @@ SYSTEM:
   # Number of CPU cores to dedicate to the process
   # num_processes: 4
   # do we want fresh candles downloaded?
-  fresh_candles: True
+  fresh_candles = True
 
 # ------------------------------------------------
 # Test Period and Range
