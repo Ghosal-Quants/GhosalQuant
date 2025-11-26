@@ -57,14 +57,12 @@
 </p>
 
 # Current System Overview
-
 The main idea of the current system is to enforce a clear separation of concerns between different components of the
 trading system. As for example, the Strategy component should not be concerned with parsing data, or handling `DataFrame`
 objects, and only needs to consider individual bars/candles of market data.
 
 ## 1 System Components
-
-- Main (e.g. `src/example_main.py``)
+- Main (e.g. `src/example_main.py`)
   - Instantiates and links all components and begins execution.
     - Strategy class (e.g. `src/example_strategy.py`)
       - Inherits from abstract Strategy base class (`src/execution/strategy_base.py` -> `Strategy` class)
