@@ -6,6 +6,7 @@ jupyterlab
 matplotlib
 notebook
 numpy>=2.0
+openpyxl
 pandas
 plotly
 pytest
