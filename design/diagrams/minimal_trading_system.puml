@@ -10,14 +10,15 @@ skinparam ranksep 10
 package "Execution System" {
   [Data Parser]
   [Strategy]
-  [Event Handler]
+  [SignalSink]
 }
 
 package "Data Layer" {
   [DataSource]
   [LocalDataSource]
-  [ReplayDataSource]
   [StreamingDataSource]
+  [YFinanceDataSource]
+  [DataFrameDataSource]
 }
 
 package "Backtester" {
@@ -33,18 +34,19 @@ package "Reporting System" {
 
 ' Wiring
 [DataSource] <|-- [LocalDataSource]
-[DataSource] <|-- [ReplayDataSource]
+[DataSource] <|-- [YFinanceDataSource]
+[DataSource] <|-- [DataFrameDataSource]
 [DataSource] <|-- [StreamingDataSource]
 
 [StreamingDataSource] --> [Data bank/cache]
 [DataSource] --> [Data Parser] : data in
-[Data Parser] --> [Strategy]
-[Strategy] --> [Event Handler] : Event Trigger
+[Data Parser] --> [Strategy] : Bar
+[Strategy] --> [SignalSink] : Signal
 
 ' Backtester
 [Data bank/cache] --> [Sample(s) (Sliding window/stream)]
-[Sample(s) (Sliding window/stream)] --> [ReplayDataSource] : feeds
-[Event Handler] --> [Evaluation System]
+[Sample(s) (Sliding window/stream)] --> [DataFrameDataSource] : feeds
+[SignalSink] --> [Evaluation System]
 
 ' Reporting
 [Evaluation System] --> [Graphs / Tables / Charts]
