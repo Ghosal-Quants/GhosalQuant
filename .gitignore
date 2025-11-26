@@ -1,0 +1,12 @@
+# Pycharm
+.idea/
+*.iml
+
+# Bytecode
+__pycache__/
+*/__pycache__/
+*.pyc
+
+# Venvs
+.venv/
+venv/
