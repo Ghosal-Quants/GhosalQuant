@@ -24,8 +24,8 @@ class Signal:
     time_stamp: datetime
     symbol: str
     signal_type: SignalType
+    price: float
     confidence: float = 1.0
-    price: float | None = None
     quantity: float | None = None
     metadata: dict[str, Any] | None = None
 
@@ -51,8 +51,9 @@ class Signal:
 
 @dataclass
 class Trade:
+    id: int
     symbol: str
-    signal_type: SignalType | None
+    signal_type: SignalType
     entry_price: float
     size: float
     open_time: datetime
@@ -61,7 +62,7 @@ class Trade:
 
     def unrealised_pnl(self, current_price: float) -> float:
         # PnL is not applicable for trades where no operation was performed
-        if self.signal_type is None or self.signal_type is SignalType.NOOP:
+        if self.signal_type is SignalType.NOOP:
             return 0.0
 
         # sign of pnl for BUY is always +1 (win), for SELL is always -1 (win)
