@@ -1,17 +1,15 @@
-BUY = 1
-SELL = -1
-NONE = None
+from core.types import SignalType
 
 class Trade:
     # minimal dummy Trade class
     def __init__(self, row):
         self.running = True # all new trades we can assume are open
         self.result = 0 # the result of the trade -> 1=win, -1=loss
-        self.SIGNAL = row.SIGNAL
+        self.SIGNAL: SignalType = row.SIGNAL
 
         # defined alsewhere in the strategy()
-        self.TP = row.TP
-        self.SL = row.SL
+        self.TP = row["take_profit"]
+        self.SL = row["stop_loss"]
         self.entry_price = row.Close # test_backtester, test_strategy
         self.entry_time = row.name # test_get_data_script.py has ts as index
 
@@ -22,17 +20,17 @@ class Trade:
         
     def update(self, row):
         """
-        Some logic for checking if the current row is a winner or a lsoer
+        Some logic for checking if the current row is a winner or a loser
         """
 
-        if self.SIGNAL == BUY:
+        if self.SIGNAL == SignalType.BUY:
             if row.High >= self.TP:
                 # win
                 self.close_trade(row, 1)
             elif row.Low <= self.SL:
                 self.close_trade(row, -1)
                 # loss
-        if self.SIGNAL == SELL:
+        if self.SIGNAL == SignalType.SELL:
             if row.Low <= self.TP:
                 # win
                 self.close_trade(row, 1)
@@ -50,7 +48,7 @@ class Trade:
         self.exit_time = row.name # record ts when trade is closed
 
         # exit price as well
-        if self.SIGNAL == BUY:
+        if self.SIGNAL == SignalType.BUY:
             if result == 1: # was a win
                 self.exit_price = self.TP
             else:
@@ -58,7 +56,7 @@ class Trade:
             
             self.pnl = self.exit_price - self.entry_price
 
-        elif self.SIGNAL == SELL:
+        elif self.SIGNAL == SignalType.SELL:
             if result == 1:
                 self.exit_price = self.TP
             else:

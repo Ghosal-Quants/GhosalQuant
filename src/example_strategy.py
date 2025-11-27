@@ -1,5 +1,3 @@
-from importlib.metadata import metadata
-
 from execution.strategy_base import Strategy
 from core.types import Bar, Signal, SignalType
 

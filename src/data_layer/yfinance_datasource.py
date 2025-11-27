@@ -3,6 +3,7 @@ from data_layer.data import DataSource
 from datetime import datetime, timedelta
 from typing import AsyncIterable
 import yfinance as yf
+import pandas as pd
 import asyncio
 
 class YFinanceDataSource(DataSource):
@@ -48,7 +49,7 @@ class YFinanceDataSource(DataSource):
             f"Fetching {self.symbol} data from {self.start:%Y-%m-%d} to {self.end:%Y-%m-%d}..."
         )
 
-        data = yf.download(self.symbol, start=self.start, end=self.end, progress=False, auto_adjust=True)
+        data: pd.DataFrame = yf.download(self.symbol, start=self.start, end=self.end, progress=False, auto_adjust=True)
         
         for ts, row in data.iterrows():
             bar = Bar(

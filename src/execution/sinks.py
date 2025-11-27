@@ -1,23 +1,24 @@
-from typing import Protocol, Optional
+from __future__ import annotations
+from typing import Protocol
 from core.types import Signal, SignalType
 import pandas as pd
 from dataclasses import replace
 
 class SignalSink(Protocol):
-    def __init__(self, next_sink: Optional["SignalSink"] = None):
+    def __init__(self, next_sink: SignalSink | None = None):
         self._next_sink = next_sink
 
     async def on_signal(self, signal: Signal) -> None: ...
 
 class PrintSink(SignalSink):
-    def __init__(self, next_sink: SignalSink = None):
+    def __init__(self, next_sink: SignalSink | None = None):
         super().__init__(next_sink)
 
     async def on_signal(self, signal: Signal) -> None:
         print(f"[PrintSink]: {signal}")
 
 class BacktesterSink(SignalSink):
-    def __init__(self, backtester, next_sink: SignalSink = None) -> None:
+    def __init__(self, backtester, next_sink: SignalSink | None = None) -> None:
         super().__init__(next_sink)
         self.backtester = backtester
 
@@ -27,7 +28,7 @@ class BacktesterSink(SignalSink):
 class DataFrameSink(SignalSink):
     def __init__(
             self,
-            next_sink: SignalSink = None,
+            next_sink: SignalSink | None = None,
             dataframe: pd.DataFrame | None = None,
             *,
             timestamp_col: str,
@@ -36,16 +37,36 @@ class DataFrameSink(SignalSink):
             quantity_col: str
     ) -> None:
         super().__init__(next_sink)
-        if dataframe is None:
-            dataframe = pd.DataFrame(
-                columns=[timestamp_col, signal_col, confidence_col]
-            )
 
         self._dataframe = dataframe
         self._timestamp_col = timestamp_col
         self._signal_col = signal_col
         self._confidence_col = confidence_col
         self._quantity_col = quantity_col
+
+        if self._timestamp_col is None:
+            self._use_index_for_timestamp = True
+        else:
+            if self._timestamp_col in self._dataframe.columns:
+                self._use_index_for_timestamp = False
+            else:
+                raise ValueError(f"Timestamp column '{self._timestamp_col}' not found in DataFrame columns.")
+
+        if dataframe is None:
+            self._dataframe = pd.DataFrame(
+                columns=[timestamp_col, signal_col, confidence_col, quantity_col]
+            )
+        else:
+            required_cols = [
+                self._signal_col,
+                self._confidence_col,
+                self._quantity_col,
+            ]
+
+            for col in required_cols:
+                if col not in self._dataframe.columns:
+                    self._dataframe[col] = None
+
 
     async def on_signal(self, signal: Signal) -> None:
         # TODO: Handle cases where user wants to accumulate new rows for signals, instead of updating existing rows
@@ -65,6 +86,16 @@ class DataFrameSink(SignalSink):
         self._dataframe.loc[mask, self._signal_col] = signal.signal_type.value
         self._dataframe.loc[mask, self._confidence_col] = signal.confidence
         self._dataframe.loc[mask, self._quantity_col] = signal.quantity
+
+        meta = getattr(signal, "metadata", None) or None
+
+        if meta is None:
+            return
+
+        for key, value in meta.items():
+            if key not in self._dataframe.columns:
+                self._dataframe[key] = None
+            self._dataframe.loc[mask, key] = value
 
     def get_dataframe(self) -> pd.DataFrame:
         return self._dataframe

@@ -1,8 +1,9 @@
 import pandas as pd
-import sys, os
 
-from src.compatibility.strategies.test_strategy import example_strategy
-from src.compatibility.backtester import Backtester
+from src.backtester.backtester import Backtester
+from src.compatibility.legacybacktester import LegacyBacktester
+from src.example_strategy import ExampleStrategy
+from src.core.types import SignalType
 
 def create_test_dataframe() -> pd.DataFrame:
     """
@@ -33,17 +34,15 @@ def test_prepare_data():
     test_df: pd.DataFrame = create_test_dataframe()
 
     # instantiate Backtester object - mimic the run() function 
-    backtest_obj: Backtester = Backtester(test_df, example_strategy)
+    backtest_obj: Backtester = LegacyBacktester(test_df, symbol="TEST", strategy=ExampleStrategy())
 
-    # Should leavbe backtester.df with an extra buy/sell ilumn 
-    backtest_obj.prepare_data()
+    # Should leave backtester.df with a Signal column
+    backtest_obj.run()
 
-    # Check that the columns exist and are initialized to 0
-    assert 'BUY' in backtest_obj.df.columns
-    assert 'SELL' in backtest_obj.df.columns
+    # Check that the columns exist and are initialized to SignalType.NOOP
+    assert 'SIGNAL' in backtest_obj.df.columns
     # Assert that ALL values in the new columns are 0
-    assert (backtest_obj.df["BUY"] == 0).all()
-    assert (backtest_obj.df["SELL"] == 0).all()
+    assert (backtest_obj.df["SIGNAL"] == SignalType.NOOP.value).all()
 
 
 def test_apply_strategy():
@@ -52,11 +51,7 @@ def test_apply_strategy():
     test_df: pd.DataFrame = create_test_dataframe()
 
     # instantiate Backtester object - mimic the run() function 
-    backtest_obj: Backtester = Backtester(test_df, example_strategy)
-
-    # Should leavbe backtester.df with an extra buy/sell col
-    # Can assume this works by the above test....
-    backtest_obj.prepare_data()
+    backtest_obj: Backtester = LegacyBacktester(test_df, "TEST", ExampleStrategy())
 
     # Assert the buy and sells exist in the updated df 
 
@@ -70,10 +65,10 @@ def test_apply_strategy():
     # Index 6: 102.80 > 102.50 -> +1 (Buy)
 
     # Apply strategy
-    backtest_obj.apply_strategy()
+    backtest_obj.run()
 
     # Print the df 
-    print(f"{backtest_obj.df=}")
+    print(f"{backtest_obj.df}")
     
     # Check if the 'SIGNAL' column was created
     assert 'SIGNAL' in backtest_obj.df.columns
@@ -93,11 +88,10 @@ def test_run_backtest():
     test_df: pd.DataFrame = create_test_dataframe()
 
     # instantiate Backtester object - mimic the run() function 
-    backtest_obj: Backtester = Backtester(test_df, example_strategy)
+    backtest_obj: Backtester = LegacyBacktester(test_df, "TEST", ExampleStrategy())
 
     # Should leavbe backtester.df with an extra buy/sell col
-    # Can assume this works by the above test....
-    backtest_obj.prepare_data()
+    # Can assume this works by the above test...
 
     # Assert the buy and sells exist in the updated df 
 
@@ -110,11 +104,8 @@ def test_run_backtest():
     # Index 5: 102.50 > 102.00 -> +1 (Buy)
     # Index 6: 102.80 > 102.50 -> +1 (Buy)
 
-    # Apply strategy
-    backtest_obj.apply_strategy()
-
     # Run the backtest
-    backtest_obj.run_backtest()
+    backtest_obj.run()
 
     # check for the df_results
     # backtest_obj.df_results
