@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from enum import Enum
 from typing import Optional
@@ -64,3 +64,23 @@ class Trade:
         # sign of pnl for BUY is always +1 (win), for SELL is always -1 (win)
         sign: int = 1 if self.signal_type is SignalType.BUY else -1
         return sign * (current_price - self.entry_price) * self.size
+
+@dataclass(frozen=True, slots=True)
+class BacktestKPMs:
+    total_trades: int
+    total_wins: int
+    total_losses: int
+    win_rate_pct: float
+    total_pnl: float
+
+    def as_dict(self) -> dict[str, float | int]:
+        return asdict(self)
+
+    def __str__(self) -> str:
+        return (
+            f"Total Trades: {self.total_trades}, "
+            +f"Total Wins: {self.total_wins}, "
+            +f"Total Losses: {self.total_losses}, "
+            +f"Win Rate (%): {self.win_rate_pct:.2f}, "
+            +f"Total pnl: {self.total_pnl:.2f}"
+        )
