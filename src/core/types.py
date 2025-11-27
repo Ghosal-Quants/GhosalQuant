@@ -1,7 +1,8 @@
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, asdict
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from typing import Any
+
 
 @dataclass(frozen=True, slots=True)
 class Bar:
@@ -25,7 +26,8 @@ class Signal:
     signal_type: SignalType
     confidence: float = 1.0
     price: float | None = None
-    quantity: Optional[float] = field(default=None)
+    quantity: float | None = None
+    metadata: dict[str, Any] | None = None
 
     def __post_init__(self):
         if not (0.0 <= self.confidence <= 1.0):
@@ -41,6 +43,7 @@ class Signal:
             +f"Symbol: {self.symbol}, "
             +f"Confidence: {self.confidence}"
             +(", Price: " + str(self.price) if self.price is not None else "")
+            +(", Metadata: " + str(self.metadata) if self.metadata is not None else "")
         )
 
     def __repr__(self) -> str:

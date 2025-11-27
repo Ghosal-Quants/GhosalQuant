@@ -1,40 +1,67 @@
+from importlib.metadata import metadata
+
 from execution.strategy_base import Strategy
 from core.types import Bar, Signal, SignalType
 
 
 class ExampleStrategy(Strategy):
-    '''
-    A simple example strat that generates signals based on the previous closing price:
-        - if current bar closes higher than previous -> SELL signal
-        - if current bar closes lower than previous -> BUY signal
-    * this is just a minimal implementation to exemplify how the interface would be used
-    '''
+    """
+    Applies a simple test strategy with defined Stop Loss (SL) and Take Profit (TP).
+
+    SignalType.BUY if Close < Previous Close.
+    SignalType.SELL if Close > Previous Close.
+    Otherwise, SignalType.NOOP.
+
+    SL is fixed at 1.0% and TP at 2.0% of the entry price.
+    """
+
+    _SL_PERCENT: float = 0.01
+    _TP_PERCENT: float = 0.02
+
     def __init__(self):
         self.prev_bar: Bar | None = None
 
     def on_start(self):
         print("Strategy started.")
-        self.prev_bar = None
 
     def on_end(self):
         print("Strategy finished.")
 
-    def on_market_data(self, bar: Bar) -> Signal | None:
+    def on_market_data(self, bar: Bar) -> Signal:
         if self.prev_bar is None:
             self.prev_bar = bar
-            return None  
+            return Signal(signal_type=SignalType.NOOP, time_stamp=bar.time_stamp, symbol=bar.symbol, price=bar.close)
 
-        prev = self.prev_bar
-        signal_type: SignalType | None
+        signal_type: SignalType
 
-        if bar.close > prev.close:
+        if bar.close > self.prev_bar.close:
             signal_type = SignalType.SELL
-        elif bar.close < prev.close:
+        elif bar.close < self.prev_bar.close:
             signal_type = SignalType.BUY
         else:
             self.prev_bar = bar
-            return None
+            return Signal(signal_type=SignalType.NOOP, time_stamp=bar.time_stamp, symbol=bar.symbol, price=bar.close)
 
         self.prev_bar = bar
 
-        return Signal(time_stamp=bar.time_stamp, symbol=bar.symbol, signal_type=signal_type)
+        # Handle stop loss and take profit levels only for BUY/SELL
+
+        if signal_type == SignalType.BUY:
+            sl = bar.close * (1 - self._SL_PERCENT)
+            tp = bar.close * (1 + self._TP_PERCENT)
+        elif signal_type == SignalType.SELL:
+            sl = bar.close * (1 + self._SL_PERCENT)
+            tp = bar.close * (1 - self._TP_PERCENT)
+        else:
+            raise ValueError("Invalid signal type for SL/TP calculation.") # Should be unreachable
+
+        return Signal(
+            time_stamp= bar.time_stamp,
+            symbol= bar.symbol,
+            signal_type= signal_type,
+            price= bar.close,
+            metadata= {
+                "stop_loss": sl,
+                "take_profit": tp
+            }
+        )
