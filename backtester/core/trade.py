@@ -4,7 +4,7 @@ NONE = None
 
 class Trade:
     # minimal dummy Trade class
-    def __init__(self, row):
+    def __init__(self, row, size=1.0):
         self.running = True # all new trades we can assume are open
         self.result = 0 # the result of the trade -> 1=win, -1=loss
         self.SIGNAL = row.SIGNAL
@@ -15,6 +15,7 @@ class Trade:
         self.entry_price = row.Close # test_backtester, test_strategy
         self.entry_time = row.name # test_get_data_script.py has ts as index
 
+        self.size = size
         self.exit_time = None
         self.exit_price = None
         self.pnl = None
@@ -45,7 +46,7 @@ class Trade:
     def close_trade(self, row, result: int):
         self.running = False
         self.result = result
-
+        
         # update when trade closes, prob have for exit price and time
         self.exit_time = row.name # record ts when trade is closed
 
@@ -56,7 +57,8 @@ class Trade:
             else:
                 self.exit_price = self.SL
             
-            self.pnl = self.exit_price - self.entry_price
+            price_diff = self.exit_price - self.entry_price
+            self.pnl = price_diff * self.size
 
         elif self.SIGNAL == SELL:
             if result == 1:
@@ -64,4 +66,5 @@ class Trade:
             else:
                 self.exit_price = self.SL
             
-            self.pnl = self.exit_price - self.entry_price
+            price_diff = self.exit_price - self.entry_price
+            self.pnl = price_diff * self.size

@@ -10,13 +10,14 @@ strategy_func = Callable[[pd.DataFrame], pd.DataFrame]
 
 
 class Backtester:
-    def __init__(self, df_hour_data, df_sec_data, strategy: strategy_func):
+    def __init__(self, df_hour_data, df_sec_data, strategy: strategy_func, position_size):
 
         # df hour and df sec has to have index as dt obj
 
         self.df_hour_data = df_hour_data
         self.df_sec_data = df_sec_data
         self.strategy = strategy
+        self.position_size = position_size
 
         # prepare the data 
         self.prepare_data()
@@ -127,7 +128,7 @@ class Backtester:
                 # Start a new trade object and add it to the open list
                 # if trade open then ignore new signals
                 if len(open_trades) == 0:
-                    open_trades.append(Trade(row))  
+                    open_trades.append(Trade(row, size=self.position_size))  
             
             # realized pnl is sum of pnl from closed trades - update after appended
             ttl_realized_pnl = 0
