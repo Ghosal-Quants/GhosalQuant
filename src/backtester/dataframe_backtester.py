@@ -49,7 +49,7 @@ class DataFrameBacktester(Backtester):
                 volume_col= volume_col
             ),
             signal_destination=DataFrameSink(
-                self._return_df,
+                dataframe= self._return_df,
                 timestamp_col= timestamp_col,
                 signal_col= signal_col,
                 confidence_col= confidence_col,
