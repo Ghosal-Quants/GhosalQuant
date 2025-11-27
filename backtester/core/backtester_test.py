@@ -63,15 +63,17 @@ def create_test_dataframe(granularity: str) -> pd.DataFrame:
 
     return df
 
+def create_test_dfs(gran1: str, gran2: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+    return create_test_dataframe(gran1), create_test_dataframe(gran2)
+
 
 def test_prepare_data():
 
     # define a dataframe - according to expected data 
-    test_df_m5: pd.DataFrame = create_test_dataframe("M5")
-    test_df_S30: pd.DataFrame = create_test_dataframe("M5")
+    test_df_m5, test_df_s30 =  create_test_dfs("M5", "S30")
 
     # instantiate Backtester object - mimic the run() function 
-    backtest_obj: Backtester = Backtester(test_df_m5, test_df_S30, example_strategy)
+    backtest_obj: Backtester = Backtester(test_df_m5, test_df_s30, example_strategy)
 
     # Should leavbe backtester.df with an extra buy/sell ilumn 
     backtest_obj.prepare_data()
@@ -88,8 +90,7 @@ def test_prepare_data():
 def test_apply_strategy():
 
     # define a dataframe - according to expected data 
-    test_df_m5: pd.DataFrame = create_test_dataframe("M5")
-    test_df_s30: pd.DataFrame = create_test_dataframe("S30")
+    test_df_m5, test_df_s30 =  create_test_dfs("M5", "S30")
 
     # instantiate Backtester object - mimic the run() function 
     backtest_obj: Backtester = Backtester(test_df_m5, test_df_s30, example_strategy)
