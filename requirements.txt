@@ -5,7 +5,7 @@ jupyter
 jupyterlab
 matplotlib
 notebook
-numpy>=2.0
+numpy
 openpyxl
 pandas
 plotly
@@ -13,3 +13,4 @@ pytest
 requests
 widgetsnbextension
 yfinance
+PyYAML
