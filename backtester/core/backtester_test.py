@@ -67,20 +67,22 @@ def create_test_dataframe(granularity: str) -> pd.DataFrame:
 def test_prepare_data():
 
     # define a dataframe - according to expected data 
-    test_df: pd.DataFrame = create_test_dataframe("M5")
+    test_df_m5: pd.DataFrame = create_test_dataframe("M5")
+    test_df_S30: pd.DataFrame = create_test_dataframe("M5")
 
     # instantiate Backtester object - mimic the run() function 
-    backtest_obj: Backtester = Backtester(test_df, example_strategy)
+    backtest_obj: Backtester = Backtester(test_df_m5, test_df_S30, example_strategy)
 
     # Should leavbe backtester.df with an extra buy/sell ilumn 
     backtest_obj.prepare_data()
 
     # Check that the columns exist and are initialized to 0
-    assert 'BUY' in backtest_obj.df.columns
-    assert 'SELL' in backtest_obj.df.columns
+    # We dont have these signals on the lower granularity df 
+    assert 'BUY' in backtest_obj.df_hour_data.columns
+    assert 'SELL' in backtest_obj.df_hour_data.columns
     # Assert that ALL values in the new columns are 0
-    assert (backtest_obj.df["BUY"] == 0).all()
-    assert (backtest_obj.df["SELL"] == 0).all()
+    assert (backtest_obj.df_hour_data["BUY"] == 0).all()
+    assert (backtest_obj.df_hour_data["SELL"] == 0).all()
 
 
 def test_apply_strategy():
