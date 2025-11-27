@@ -88,10 +88,11 @@ def test_prepare_data():
 def test_apply_strategy():
 
     # define a dataframe - according to expected data 
-    test_df: pd.DataFrame = create_test_dataframe()
+    test_df_m5: pd.DataFrame = create_test_dataframe("M5")
+    test_df_s30: pd.DataFrame = create_test_dataframe("S30")
 
     # instantiate Backtester object - mimic the run() function 
-    backtest_obj: Backtester = Backtester(test_df, example_strategy)
+    backtest_obj: Backtester = Backtester(test_df_m5, test_df_s30, example_strategy)
 
     # Should leavbe backtester.df with an extra buy/sell col
     # Can assume this works by the above test....
@@ -115,12 +116,12 @@ def test_apply_strategy():
     # print(f"{backtest_obj.df=}")
     
     # Check if the 'SIGNAL' column was created
-    assert 'SIGNAL' in backtest_obj.df.columns
+    assert 'SIGNAL' in backtest_obj.df_hour_data.columns
     
     expected_signals = pd.Series([0, 1, -1, 1, 1, 1, 1, 0], name='SIGNAL')
     # Check if the generated 'SIGNAL' column matches the expected Series
     # Use numpy.testing.assert_array_equal for robust pandas Series comparison
-    pd.testing.assert_series_equal(backtest_obj.df['SIGNAL'], expected_signals)
+    pd.testing.assert_series_equal(backtest_obj.df_hour_data['SIGNAL'], expected_signals)
     
 
 def test_run_backtest():
