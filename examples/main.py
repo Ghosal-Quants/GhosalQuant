@@ -6,20 +6,15 @@ import yfinance as yf
 from compatibility.legacybacktester import LegacyBacktester
 from example_strategy import ExampleStrategy
 
-from util.config import ConfigError, load_config
+from util.config import load_config, Config
 
 # TODO: Note that this is the LEGACY main. Should use DataFrameBacktester in future.
 
 if __name__ == "__main__":
     # Load user's config file
-    try:
-        config_dict: dict[str, str] = load_config("config.yaml")
-        print("User config loaded successfully")
-    except ConfigError as e:
-        print(f"[CONFIG ERR]: {e}")
-        sys.exit(1)
+    config: Config = load_config("config.yaml")
 
-    sym: str = config_dict["SYSTEM"]["target"]
+    sym: str = config.system.symbols[0]
 
     # Now we have user settings we can download data
     df_raw: pd.DataFrame = yf.download(sym, start=datetime.now() - timedelta(days=30), end=datetime.now(), progress=False, auto_adjust=True)
@@ -37,7 +32,7 @@ if __name__ == "__main__":
 
     # Create an instance of the backtester
     # pass in strat to backtester
-    bt = LegacyBacktester(df=df, symbol=config_dict["SYSTEM"]["target"], strategy=ExampleStrategy())
+    bt = LegacyBacktester(df=df, symbol=config.system.symbols[0], strategy=ExampleStrategy())
 
     # run the backtest
     bt.run()
