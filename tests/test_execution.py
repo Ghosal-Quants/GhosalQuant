@@ -7,6 +7,7 @@ from example_strategy import ExampleStrategy
 from core.types import SignalType, Signal, Bar
 from execution.sinks import ListSink
 
+
 # Helper function
 def _bar(timestamp: str, **kwargs) -> Bar:
     return Bar(time_stamp=datetime.fromisoformat(timestamp), **kwargs)
@@ -22,7 +23,7 @@ def test_chain_sinks():
     execution: ExecutionSystem = ExecutionSystem(
         data_src=ListDataSource(bars=bars),
         strategy=ExampleStrategy(),
-        signal_destination=list_sink,
+        signal_destination=ListSink(next_sink=ListSink(next_sink=ListSink(next_sink=list_sink))),
         ignore_noop_signals=False
     )
 
