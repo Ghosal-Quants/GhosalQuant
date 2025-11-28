@@ -4,11 +4,18 @@ from core.types import Signal, SignalType
 import pandas as pd
 from dataclasses import replace
 
+
 class SignalSink(Protocol):
     def __init__(self, next_sink: SignalSink | None = None):
         self._next_sink = next_sink
 
+    @staticmethod
+    async def pass_to_next(next_sink: SignalSink | None, signal: Signal) -> None:
+        if next_sink is not None:
+            await next_sink.on_signal(signal)
+
     async def on_signal(self, signal: Signal) -> None: ...
+
 
 class PrintSink(SignalSink):
     def __init__(self, next_sink: SignalSink | None = None):
@@ -16,6 +23,8 @@ class PrintSink(SignalSink):
 
     async def on_signal(self, signal: Signal) -> None:
         print(f"[PrintSink]: {signal}")
+        await self.pass_to_next(self._next_sink, signal)
+
 
 class BacktesterSink(SignalSink):
     def __init__(self, backtester, next_sink: SignalSink | None = None) -> None:
@@ -24,6 +33,8 @@ class BacktesterSink(SignalSink):
 
     async def on_signal(self, signal: Signal) -> None:
         await self.backtester.handle_signal(signal)
+        await self.pass_to_next(self._next_sink, signal)
+
 
 class DataFrameSink(SignalSink):
     def __init__(
@@ -97,14 +108,18 @@ class DataFrameSink(SignalSink):
                 self._dataframe[key] = None
             self._dataframe.loc[mask, key] = value
 
+        await self.pass_to_next(self._next_sink, signal)
+
     def get_dataframe(self) -> pd.DataFrame:
         return self._dataframe
+
 
 class BrokerSink(SignalSink):
     def __init__(self, next_sink: SignalSink = None):
         super().__init__(next_sink)
     async def on_signal(self, signal: Signal) -> None:
         raise NotImplementedError("BrokerSink is not implemented yet.")
+
 
 class RiskManagerSink(SignalSink):
     def __init__(
@@ -132,3 +147,19 @@ class RiskManagerSink(SignalSink):
         adjusted_signal = replace(signal, quantity=qty)
 
         await self._next_sink.on_signal(adjusted_signal)
+        await self.pass_to_next(self._next_sink, signal)
+
+class ListSink(SignalSink):
+    def __init__(self, next_sink: SignalSink | None = None, signals: list[Signal] | None = None):
+        super().__init__(next_sink)
+        if signals is None:
+            signals = []
+
+        self._signals: list[Signal] = signals
+
+    async def on_signal(self, signal: Signal) -> None:
+        self._signals.append(signal)
+        await self.pass_to_next(self._next_sink, signal)
+
+    def get_signals(self) -> list[Signal]:
+        return self._signals
