@@ -3,6 +3,7 @@ from datetime import datetime
 from pathlib import Path
 
 from core.types import BacktestKPMs, SignalType
+from util.deprecation import deprecated
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -30,6 +31,7 @@ def output_to_excel(df_results: pd.DataFrame) -> None:
     print(f"Saved results to {filepath}.")
 
 
+@deprecated("Legacy code. Should probably be handled with BacktestKPMs methods directly.")
 def calculate_stats(df_results: pd.DataFrame) -> BacktestKPMs:
     """
     Calculates key performance metrics

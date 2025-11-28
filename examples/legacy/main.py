@@ -4,7 +4,7 @@ import pandas as pd
 import yfinance as yf
 
 from compatibility.legacybacktester import LegacyBacktester
-from example_strategy import ExampleStrategy
+from compatibility.test_strategy import example_strategy
 
 from util.config import load_config, Config
 
@@ -32,9 +32,9 @@ if __name__ == "__main__":
 
     # Create an instance of the backtester
     # pass in strat to backtester
-    bt = LegacyBacktester(df=df, symbol=config.system.symbols[0], strategy=ExampleStrategy())
+    bt = LegacyBacktester(df=df, strategy=example_strategy)
 
     # run the backtest
-    bt.run()
+    bt.run_backtest()
 
     print(df)
