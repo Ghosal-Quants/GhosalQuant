@@ -46,7 +46,7 @@ def test_prepare_data():
     assert (df["SIGNAL"] == SignalType.NOOP.value).all()
 
 
-def test_apply_strategy():
+def test_legacy_apply_strategy():
 
     # define a dataframe - according to expected data 
     test_df: pd.DataFrame = create_test_dataframe()
@@ -75,11 +75,21 @@ def test_apply_strategy():
     
     # Check if the 'SIGNAL' column was created
     assert 'SIGNAL' in df.columns
-    
-    expected_signals = pd.Series([0, 1, -1, 1, 1, 1, 1], name='SIGNAL')
+
+    data = [
+        SignalType.NOOP.value,
+        SignalType.BUY.value,
+        SignalType.SELL.value,
+        SignalType.BUY.value,
+        SignalType.BUY.value,
+        SignalType.BUY.value,
+        SignalType.BUY.value
+    ]
+
+    expected_signals = pd.Series(data=data, name='Signal')
     # Check if the generated 'SIGNAL' column matches the expected Series
     # Use numpy.testing.assert_array_equal for robust pandas Series comparison
-    pd.testing.assert_series_equal(df['SIGNAL'], expected_signals)
+    pd.testing.assert_series_equal(df['Signal'], expected_signals)
     
 
 def test_run_backtest():
