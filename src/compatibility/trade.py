@@ -1,5 +1,8 @@
 from core.types import SignalType
+from util.deprecation import deprecated
 
+
+@deprecated("Please use core.types.Trade instead.")
 class Trade:
     # minimal dummy Trade class
     def __init__(self, row):
@@ -8,8 +11,8 @@ class Trade:
         self.SIGNAL: SignalType = row.SIGNAL
 
         # defined alsewhere in the strategy()
-        self.TP = row["take_profit"]
-        self.SL = row["stop_loss"]
+        self.TP = row["TP"]
+        self.SL = row["SL"]
         self.entry_price = row.Close # test_backtester, test_strategy
         self.entry_time = row.name # test_get_data_script.py has ts as index
 

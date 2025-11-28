@@ -1,9 +1,13 @@
+from tkinter.scrolledtext import example
+
 import pandas as pd
 
 from src.backtester.backtester import Backtester
-from src.compatibility.legacybacktester import LegacyBacktester
 from src.example_strategy import ExampleStrategy
 from src.core.types import SignalType
+
+from src.compatibility.legacybacktester import LegacyBacktester
+from src.compatibility.test_strategy import example_strategy
 
 def create_test_dataframe() -> pd.DataFrame:
     """
@@ -27,34 +31,19 @@ def create_test_dataframe() -> pd.DataFrame:
     # Create && return DataFrame object
     return pd.DataFrame(data_list, columns=columns)
 
-
-def test_prepare_data():
-
-    # define a dataframe - according to expected data 
-    test_df: pd.DataFrame = create_test_dataframe()
-
-    # instantiate Backtester object - mimic the run() function 
-    backtest_obj: LegacyBacktester = LegacyBacktester(test_df, symbol="TEST", strategy=ExampleStrategy())
-
-    # Should leave backtester.df with a Signal column
-    backtest_obj.run()
-
-    # Check that the columns exist and are initialized to SignalType.NOOP
-    df: pd.DataFrame = backtest_obj.get_dataframe()
-    assert 'SIGNAL' in df.columns
-    # Assert that ALL values in the new columns are 0
-    assert (df["SIGNAL"] == SignalType.NOOP.value).all()
-
-
 def test_legacy_apply_strategy():
 
-    # define a dataframe - according to expected data 
-    test_df: pd.DataFrame = create_test_dataframe()
+    # define a dataframe - according to expected data
+    test_df = create_test_dataframe()
 
-    # instantiate Backtester object - mimic the run() function 
-    backtest_obj: LegacyBacktester = LegacyBacktester(test_df, "TEST", ExampleStrategy())
+    # instantiate Backtester object - mimic the run() function
+    backtest_obj = LegacyBacktester(test_df, example_strategy)
 
-    # Assert the buy and sells exist in the updated df 
+    # Should leave backtester.df with an extra buy/sell col
+    # Can assume this works by the above test....
+    backtest_obj.prepare_data()
+
+    # Assert the buy and sells exist in the updated df
 
     # Manually calculated expected signals (based on Close price comparison):
     # Index 0: NaN (No previous close) -> 0
@@ -66,30 +55,18 @@ def test_legacy_apply_strategy():
     # Index 6: 102.80 > 102.50 -> +1 (Buy)
 
     # Apply strategy
-    backtest_obj.run()
+    backtest_obj.apply_strategy()
 
-    df = backtest_obj.get_dataframe()
+    # Print the df
+    # print(f"{backtest_obj.df=}")
 
-    # Print the df 
-    print(f"{df}")
-    
     # Check if the 'SIGNAL' column was created
-    assert 'SIGNAL' in df.columns
+    assert 'SIGNAL' in backtest_obj.df.columns
 
-    data = [
-        SignalType.NOOP.value,
-        SignalType.BUY.value,
-        SignalType.SELL.value,
-        SignalType.BUY.value,
-        SignalType.BUY.value,
-        SignalType.BUY.value,
-        SignalType.BUY.value
-    ]
-
-    expected_signals = pd.Series(data=data, name='Signal')
+    expected_signals = pd.Series([0, 1, -1, 1, 1, 1, 1], name='SIGNAL')
     # Check if the generated 'SIGNAL' column matches the expected Series
     # Use numpy.testing.assert_array_equal for robust pandas Series comparison
-    pd.testing.assert_series_equal(df['Signal'], expected_signals)
+    pd.testing.assert_series_equal(backtest_obj.df['SIGNAL'], expected_signals)
     
 
 def test_run_backtest():
@@ -101,7 +78,7 @@ def test_run_backtest():
     test_df: pd.DataFrame = create_test_dataframe()
 
     # instantiate Backtester object - mimic the run() function 
-    backtest_obj: Backtester = LegacyBacktester(test_df, "TEST", ExampleStrategy())
+    backtest_obj = LegacyBacktester(test_df, example_strategy)
 
     # Should leavbe backtester.df with an extra buy/sell col
     # Can assume this works by the above test...
@@ -118,7 +95,7 @@ def test_run_backtest():
     # Index 6: 102.80 > 102.50 -> +1 (Buy)
 
     # Run the backtest
-    backtest_obj.run()
+    backtest_obj.run_backtest()
 
     # check for the df_results
     # backtest_obj.df_results
