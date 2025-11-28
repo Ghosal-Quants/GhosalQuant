@@ -5,14 +5,13 @@ import pandas as pd
 from dataclasses import replace
 
 
+async def _pass_to_next(next_sink: SignalSink | None, signal: Signal) -> None:
+    if next_sink is not None:
+        await next_sink.on_signal(signal)
+
 class SignalSink(Protocol):
     def __init__(self, next_sink: SignalSink | None = None):
         self._next_sink = next_sink
-
-    @staticmethod
-    async def pass_to_next(next_sink: SignalSink | None, signal: Signal) -> None:
-        if next_sink is not None:
-            await next_sink.on_signal(signal)
 
     async def on_signal(self, signal: Signal) -> None: ...
 
@@ -23,7 +22,7 @@ class PrintSink(SignalSink):
 
     async def on_signal(self, signal: Signal) -> None:
         print(f"[PrintSink]: {signal}")
-        await self.pass_to_next(self._next_sink, signal)
+        await _pass_to_next(self._next_sink, signal)
 
 
 class BacktesterSink(SignalSink):
@@ -33,7 +32,7 @@ class BacktesterSink(SignalSink):
 
     async def on_signal(self, signal: Signal) -> None:
         await self.backtester.handle_signal(signal)
-        await self.pass_to_next(self._next_sink, signal)
+        await _pass_to_next(self._next_sink, signal)
 
 
 class DataFrameSink(SignalSink):
@@ -108,7 +107,7 @@ class DataFrameSink(SignalSink):
                 self._dataframe[key] = None
             self._dataframe.loc[mask, key] = value
 
-        await self.pass_to_next(self._next_sink, signal)
+        await _pass_to_next(self._next_sink, signal)
 
     def get_dataframe(self) -> pd.DataFrame:
         return self._dataframe
@@ -147,7 +146,7 @@ class RiskManagerSink(SignalSink):
         adjusted_signal = replace(signal, quantity=qty)
 
         await self._next_sink.on_signal(adjusted_signal)
-        await self.pass_to_next(self._next_sink, signal)
+        await _pass_to_next(self._next_sink, signal)
 
 class ListSink(SignalSink):
     def __init__(self, next_sink: SignalSink | None = None, signals: list[Signal] | None = None):
@@ -159,7 +158,7 @@ class ListSink(SignalSink):
 
     async def on_signal(self, signal: Signal) -> None:
         self._signals.append(signal)
-        await self.pass_to_next(self._next_sink, signal)
+        await _pass_to_next(self._next_sink, signal)
 
     def get_signals(self) -> list[Signal]:
         return self._signals
