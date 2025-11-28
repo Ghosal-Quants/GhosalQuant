@@ -148,6 +148,7 @@ class RiskManagerSink(SignalSink):
         await self._next_sink.on_signal(adjusted_signal)
         await _pass_to_next(self._next_sink, signal)
 
+
 class ListSink(SignalSink):
     def __init__(self, next_sink: SignalSink | None = None, signals: list[Signal] | None = None):
         super().__init__(next_sink)
