@@ -2,6 +2,7 @@ from typing import Protocol, Optional
 from core.types import Signal, SignalType
 import pandas as pd
 from dataclasses import replace
+import math
 
 class SignalSink(Protocol):
     def __init__(self, next_sink: Optional["SignalSink"] = None):
@@ -81,22 +82,50 @@ class RiskManagerSink(SignalSink):
             next_sink:SignalSink, 
             confidence_threshold: float = 0.5, 
             max_qty: int = 10,
-            min_qty: int = 0
+            min_qty: int = 0,
+            max_open_positions: int = 3,
     ) -> None:
         super().__init__(next_sink)
         self._confidence_threshold = confidence_threshold
         self._max_qty = max_qty
         self._min_qty = min_qty
-    
+        self._max_open_positions = max_open_positions
+        self._max_open_quantity = self._max_open_positions * self._max_qty
+
+        self._open_quantity = 0
+        self._open_positions = 0
 
     async def on_signal(self, signal: Signal) -> None:
         if signal.signal_type is SignalType.NOOP:
             return
         
+
         if signal.confidence >= self._confidence_threshold:
             qty = self._max_qty
         else:
             qty = self._min_qty
+        
+
+        if signal.signal_type is SignalType.BUY:
+            if self._open_positions >= self._max_open_positions:
+                print("[RiskManger] Blocked BUY: max open trades reached")
+                return
+            if self._open_quantity + qty > self._max_open_quantity:
+                print("[RiskManger] Blocked BUY: total quanity limit exceeded")
+                return
+
+            self._open_positions += 1
+            self._open_quantity += qty
+
+        elif signal.signal_type is SignalType.SELL:
+            if self._open_quantity == 0:
+                print("[RiskManager] Blocked SELL: cannot sell ", qty, " only", self._open_quantity, " is available") 
+                return
+            
+            qty = min(qty, self._open_quantity)
+            self._open_quantity -= qty
+            self._open_positions = 0 if self._open_quantity == 0 else math.ceil(self._open_quantity / self._max_qty)
+            
 
         adjusted_signal = replace(signal, quantity=qty)
 
