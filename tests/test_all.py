@@ -1,4 +1,4 @@
-from test_backtester import test_run_backtest, test_legacy_apply_strategy
+from test_legacy_backtester import test_run_backtest, test_legacy_apply_strategy
 from test_get_data_script import test_get_data_df
 from test_config import test_load_config
 from test_execution import test_chain_sinks, test_execute_strategy
