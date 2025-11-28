@@ -150,7 +150,7 @@ class RiskManagerSink(SignalSink):
 
 
 class ListSink(SignalSink):
-    def __init__(self, next_sink: SignalSink | None = None, signals: list[Signal] | None = None):
+    def __init__(self, signals: list[Signal] | None = None, next_sink: SignalSink | None = None):
         super().__init__(next_sink)
         if signals is None:
             signals = []

@@ -20,10 +20,10 @@ class ExampleStrategy(Strategy):
         self.prev_bar: Bar | None = None
 
     def on_start(self):
-        print("Strategy started.")
+        ...
 
     def on_end(self):
-        print("Strategy finished.")
+        ...
 
     def on_market_data(self, bar: Bar) -> Signal:
         if self.prev_bar is None:

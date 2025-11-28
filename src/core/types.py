@@ -88,3 +88,11 @@ class BacktestKPMs:
             +f"Win Rate (%): {self.win_rate_pct:.2f}, "
             +f"Total pnl: {self.total_pnl:.2f}"
         )
+
+@dataclass(frozen=True, slots=True)
+class EquityPoint:
+    time_stamp: datetime
+    equity: float
+    realised_pnl: float
+    unrealised_pnl: float
+    num_open_trades: int
