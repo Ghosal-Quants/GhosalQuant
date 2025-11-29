@@ -12,7 +12,7 @@ from util.config import load_config, Config
 
 if __name__ == "__main__":
     # Load user's config file
-    config: Config = load_config("config.yaml")
+    config: Config = load_config("../config.yaml")
 
     sym: str = config.system.symbols[0]
 

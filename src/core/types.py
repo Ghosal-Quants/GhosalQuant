@@ -89,6 +89,7 @@ class BacktestKPMs:
             +f"Total pnl: {self.total_pnl:.2f}"
         )
 
+
 @dataclass(frozen=True, slots=True)
 class EquityPoint:
     time_stamp: datetime
