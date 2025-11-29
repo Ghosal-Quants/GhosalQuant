@@ -46,7 +46,7 @@ class DataFrameBacktester(Backtester):
         self._init_capital = init_capital
 
         # Trades are uniquely identified by their id field but also by their symbol (cant close a trade of another symbol)
-        # Symbol -> Trade ID -> Trade()
+        # Symbol -> Trade ID -> Trade
         self._open_trades: dict[str, dict[int, Trade]] = {}
         self._closed_trades: list[Trade] = []
 
