@@ -4,12 +4,12 @@ from datetime import datetime
 from pandas import DataFrame
 
 from backtester.backtester import Backtester
-from core.types import SignalType, Signal, Trade, EquityPoint
+from core.types import SignalType, Signal
 from execution.strategy_base import Strategy
 from data_layer.dataframe_datasource import DataFrameDataSource
 from execution.sinks import DataFrameSink, BacktesterSink
 from portfolio.basic_portfolio import BasicPortfolio
-from util.backtester_utils import calculate_stats
+from util.backtester_utils import calculate_stats, output_to_excel
 
 
 class DataFrameBacktester(Backtester):

@@ -120,9 +120,118 @@ objects, and only needs to consider individual bars/candles of market data.
   - Testing interaction
   - Risk interaction
 
-## 2 Data Flow
+### 1.2 Data Flow
 The flow of information through the current system is intended to be as follows:
 
 ```
 DataSource -> ExecutionSystem -> Strategy -> SignalSink(s) (-> Backtester / Broker / ...)
 ```
+
+## 2 Core types
+The primary types used throughout the system are defined within `src/core/types.py`.
+
+### 2.1 Bar
+
+```python
+Bar(time_stamp: datetime, symbol: str, open: float, high: float, low: float, close: float, volume: float)
+```
+
+### 2.2 Signal
+Signals are what are directly emitted by the `Strategy` and are passed by the `ExecutionSystem` to a chain of `SignalSink`s.
+```python
+class SignalType(str, Enum):
+    BUY = 'BUY'
+    SELL = 'SELL'
+    NOOP = 'NOOP'
+
+Signal(time_stamp: datetime, symbol: str, signal_type: SignalType, price: float, confidence: float = 1.0, quantity: float | None = None, metadata: dict[str, Any] | None = None)
+```
+The metadata field is optionally used for additional information about a signal, such as stop loss or take profit levels
+if applicable.
+
+### 2.3 Trade
+Trades are currently created and managed within a subclass of the abstract `Portfolio` base class located in `src/execution/portfolio_base.py`.
+```python
+Trade(id: int, symbol: str, signal_type: SignalType, entry_price: float, size: float, open_time: datetime, close_time: datetime | None = None, realised_pnl: float | None = None)
+```
+These are used to represent trades that have been opened and closed by the `Strategy`.
+
+It has the method:
+```python
+unrealised_pnl(current_price: float) -> float:
+```
+which calculates the unrealised profit or loss of a trade based on a given mark price.
+
+### 2.4 BacktestKPMs (Backtester Key Performance Metrics) and EquityPoint
+```python
+BacktestKPMs(total_trades: int, total_wins: int, total_losses: int, win_rate_pct: float, total_pnl: float)
+
+EquityPoint(time_stamp: datetime, equity: float, realised_pnl: float, unrealised_pnl: float, num_open_trades: int)
+```
+
+## 3 Data Sources
+Data sources are implemented as subclasses of the abstract `DataSource` base class located in `src/data_layer/data.py`. The
+base class defines one method that must be implemented:
+```python
+async def __aiter__(self) -> AsyncIterable[Bar]: ...
+```
+This should be implemented to yield `Bar` instances asynchronously, which are passed by the `ExecutionSystem` to the `Strategy`.
+
+## 4 Strategies
+Strategies are implemented as subclasses of the abstract `Strategy` base class located in `src/execution/strategy_base.py`. The
+base class defines three methods that must be implemented:
+
+````python
+from core.types import Bar, Signal
+# ...
+def on_start(self) -> None: ...
+def on_market_data(self, bar: Bar) -> Signal: ...
+def on_end(self) -> None: ...
+````
+- `on_start()`: Called by the `ExecutionSystem` before it has received any market data in the form of `Bar` dataclass instances.
+- `on_market_data(bar: Bar)`: Called for each individual `Bar` received from a `DataSource`. The strategy
+  should implement its trading logic, and decide what type of `Signal` to return (e.g. `BUY`, `SELL`, `NOOP`, etc.).
+- `on_end()`: Called after all market data has been processed.
+
+## 5 Signal handlers (Signal Sinks)
+Signal handlers are derived from the `SignalSink` abstract base class located in `src/execution/sinks.py`. The base class
+defines one method that must be implemented:
+```python
+async def on_signal(self, signal: Signal) -> None: ...
+```
+### 5.1 Chaining Signal Sinks
+Signal sinks can be chained by optionally passing another `SignalSink` instance to the constructor of a `SignalSink` subclass.
+For example:
+```python
+PrintSink(
+    next_sink=BacktesterSink(backtester_instance)
+)
+```
+will create a `PrintSink` that prints a signal to the console, and then passes the same signal to the `BacktesterSink`,
+which passes the signal to the `backtester_instance`.
+
+## 6 Backtesting
+Backtesting is implemented as subclasses of the abstract `Backtester` base class located in `src/backtester/backtester.py`.
+For most cases, the `DataFrameBacktester` class located in `src/backtester/dataframe_backtester.py` should be used, which
+processes market data provided as a `pandas.DataFrame`.
+
+## 7 Portfolio Management
+Portfolio management is implemented as subclasses of the abstract `Portfolio` base class located in `src/portfolio/portfolio_base.py`.
+
+It defines the following methods and properties that must be implemented:
+```python
+async def process_signal(self, signal: Signal) -> None: ...
+
+def snapshot_equity(self, time_stamp: datetime, prices: dict[str, float]) -> None: ...
+
+@property
+def closed_trades(self) -> Iterable[Trade]: ...
+
+@property
+def equity_curve(self) -> Iterable[EquityPoint]: ...
+
+@property
+def realised_pnl(self) -> float: ...
+```
+
+>**NOTE:** Eventually this needs to use a new class like Fills instead of Signals for cleaner separation of concerns

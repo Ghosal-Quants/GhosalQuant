@@ -17,7 +17,7 @@ class Bar:
 class SignalType(str, Enum):
     BUY = 'BUY'
     SELL = 'SELL'
-    NOOP = 'NOOP' # No Operation (Hold) - Optional instead of `None`
+    NOOP = 'NOOP'
 
 @dataclass(frozen=True, slots=True)
 class Signal:
