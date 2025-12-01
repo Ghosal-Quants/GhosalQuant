@@ -30,6 +30,7 @@ def run():
     # Load user's config file 
     config_dict: dict[str, str] = load_config()
     print("User config loaded successfully")
+    print(f"{config_dict=}")
 
     # if we could not load user settings - something is super wrong 
     if config_dict is None:
