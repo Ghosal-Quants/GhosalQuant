@@ -38,11 +38,14 @@ def run():
 
 
     # Now we have user settings we can download data 
-    df: pd.DataFrame = get_data_df(config_dict)
+    df_big, df_small= get_data_df(config_dict)
+    print(f'{df_big=}')
+    print(f'{df_small=}')
+
 
     # Create an instance of the backtester
     # pass in strat to backtester
-    bt = Backtester(df, example_strategy)
+    bt = Backtester(df_big, df_small, example_strategy)
 
     # run the backtest
     bt.run_backtest()

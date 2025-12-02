@@ -1,6 +1,6 @@
 from typing import Callable
 import pandas as pd
-from trade import Trade
+from core.trade import Trade
 from datetime import datetime
 from pathlib import Path
 
@@ -29,6 +29,7 @@ class Backtester:
         """
         Will later handle the merging logic 
         """
+        print(f'{self.df_hour_data=}')
 
         # ADD BUY/SELL COLUMNs
         self.df_hour_data["BUY"] = 0
