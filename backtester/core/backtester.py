@@ -201,7 +201,7 @@ class Backtester:
         calculates kpms
         """
 
-        if self.df_results is None:
+        if self.df_results is None or self.df_results.empty:
             print("No trades")
             return
         
