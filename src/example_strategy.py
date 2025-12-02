@@ -17,6 +17,7 @@ class ExampleStrategy(Strategy):
     _TP_PERCENT: float = 0.02
 
     def __init__(self):
+        super().__init__()
         self.prev_bar: Bar | None = None
 
     def on_start(self):
@@ -41,6 +42,8 @@ class ExampleStrategy(Strategy):
             return Signal(signal_type=SignalType.NOOP, time_stamp=bar.time_stamp, symbol=bar.symbol, price=bar.close)
 
         self.prev_bar = bar
+        confidence = 0.99                                                 # Actual strategies would employ more robust confidence calculations
+        quantity = super().calculate_quantity(confidence= confidence)     # Basic quantity calculator in base class or strategies can override it and implement their own 
 
         # Handle stop loss and take profit levels only for BUY/SELL
 
@@ -53,11 +56,14 @@ class ExampleStrategy(Strategy):
         else:
             raise ValueError("Invalid signal type for SL/TP calculation.") # Should be unreachable
 
+        
         return Signal(
             time_stamp= bar.time_stamp,
             symbol= bar.symbol,
             signal_type= signal_type,
             price= bar.close,
+            confidence= confidence,
+            quantity= quantity,
             metadata= {
                 "stop_loss": sl,
                 "take_profit": tp
