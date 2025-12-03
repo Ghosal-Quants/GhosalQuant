@@ -31,7 +31,7 @@ def output_to_excel(df_results: pd.DataFrame) -> None:
     print(f"Saved results to {filepath}.")
 
 
-@deprecated("Legacy code. Should probably be handled with BacktestKPMs methods directly.")
+@deprecated("Legacy code. Should probably be handled with BacktestKPMs methods directly. Only works with legacy backtester and strategy code.")
 def calculate_stats(df_results: pd.DataFrame) -> BacktestKPMs:
     """
     Calculates key performance metrics
