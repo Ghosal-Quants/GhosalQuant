@@ -1,6 +1,8 @@
-from core.types import SignalType
 from util.deprecation import deprecated
 
+BUY = 1
+SELL = -1
+NONE = None
 
 @deprecated("Please use core.types.Trade instead.")
 class Trade:
@@ -8,11 +10,11 @@ class Trade:
     def __init__(self, row):
         self.running = True # all new trades we can assume are open
         self.result = 0 # the result of the trade -> 1=win, -1=loss
-        self.SIGNAL: SignalType = row.SIGNAL
+        self.SIGNAL = row.SIGNAL
 
         # defined alsewhere in the strategy()
-        self.TP = row["TP"]
-        self.SL = row["SL"]
+        self.TP = row.TP
+        self.SL = row.SL
         self.entry_price = row.Close # test_backtester, test_strategy
         self.entry_time = row.name # test_get_data_script.py has ts as index
 
@@ -20,26 +22,26 @@ class Trade:
         self.exit_price = None
         self.pnl = None
 
-        
+
     def update(self, row):
         """
-        Some logic for checking if the current row is a winner or a loser
+        Some logic for checking if the current row is a winner or a lsoer
         """
 
-        if self.SIGNAL == SignalType.BUY:
+        if self.SIGNAL == BUY:
             if row.High >= self.TP:
                 # win
                 self.close_trade(row, 1)
             elif row.Low <= self.SL:
                 self.close_trade(row, -1)
                 # loss
-        if self.SIGNAL == SignalType.SELL:
+        if self.SIGNAL == SELL:
             if row.Low <= self.TP:
                 # win
                 self.close_trade(row, 1)
             elif row.High >= self.SL:
                 # loss
-                self.close_trade(row, -1)   
+                self.close_trade(row, -1)
 
         pass
 
@@ -51,18 +53,18 @@ class Trade:
         self.exit_time = row.name # record ts when trade is closed
 
         # exit price as well
-        if self.SIGNAL == SignalType.BUY:
+        if self.SIGNAL == BUY:
             if result == 1: # was a win
                 self.exit_price = self.TP
             else:
                 self.exit_price = self.SL
-            
+
             self.pnl = self.exit_price - self.entry_price
 
-        elif self.SIGNAL == SignalType.SELL:
+        elif self.SIGNAL == SELL:
             if result == 1:
                 self.exit_price = self.TP
             else:
                 self.exit_price = self.SL
-            
+
             self.pnl = self.exit_price - self.entry_price
