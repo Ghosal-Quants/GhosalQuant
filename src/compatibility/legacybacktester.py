@@ -1,15 +1,31 @@
 from typing import Callable
 import pandas as pd
-from core.trade import Trade
-from datetime import datetime
 from pathlib import Path
+from datetime import datetime
 
+from compatibility.trade import Trade
+
+from util.backtester_utils import calculate_stats, output_to_excel
+from util.deprecation import deprecated
+
+# ===============================================================================================
+# NOTICE: LEGACY BACKTESTER
+#
+# This is older logic, and its just kept here for compatibility.
+#
+# TODO: Move logic to DataFrameBacktester, and stream it with handle_signal() instead of running once at execution
+#  level, then again here (not a fan of two passes + not scalable for real time / streamed bars)
+# ===============================================================================================
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+# --- Legacy strategy function type ---
 # Define the type of the function being passed in:
 # It takes two floats as arguments, and returns a float.
 strategy_func = Callable[[pd.DataFrame], pd.DataFrame]
 
-
-class Backtester:
+@deprecated("LegacyBacktester's logic is outdated. Please use DataFrameBacktester instead.")
+class LegacyBacktester:
     def __init__(self, df_hour_data, df_sec_data, strategy: strategy_func):
 
         # df hour and df sec has to have index as dt obj
@@ -18,16 +34,15 @@ class Backtester:
         self.df_sec_data = df_sec_data
         self.strategy = strategy
 
-        # prepare the data 
+        # prepare the data
         self.prepare_data()
 
         # apply strategy
         self.apply_strategy()
 
-
     def prepare_data(self):
         """
-        Will later handle the merging logic 
+        Will later handle the merging logic
         """
         print(f'{self.df_hour_data=}')
 
@@ -40,7 +55,7 @@ class Backtester:
     def apply_strategy(self):
         """
         Apply strategy to self.df
-        
+
         Should give back a df with BUY/SELL
         """
 
@@ -51,7 +66,6 @@ class Backtester:
 
 
     def run_backtest(self):
-
         """
         Run the backtests
         """
@@ -71,6 +85,7 @@ class Backtester:
         equity_data = []
 
         # Go through every row (candle) in the data.
+
         for index, row in self.df_hour_data.iterrows():
             # first check if there is even a need to zoom in on data
             if (len(open_trades)) > 0:
@@ -129,13 +144,13 @@ class Backtester:
                 # if trade open then ignore new signals
                 if len(open_trades) == 0:
                     open_trades.append(Trade(row))  
-            
+
             # realized pnl is sum of pnl from closed trades - update after appended
             ttl_realized_pnl = 0
 
             for trade in closed_trades:
                 ttl_realized_pnl += trade.pnl
-            
+
             # Remove the trades that just closed from the open list.
             open_trades = [x for x in open_trades if x.running == True]
 
@@ -150,7 +165,7 @@ class Backtester:
                     unrealized_pnl += (row.Close - ot.entry_price)
                 elif ot.SIGNAL == -1:
                     unrealized_pnl += (ot.entry_price - row.Close)
-            
+
             current_equity = init_capital + ttl_realized_pnl + unrealized_pnl
 
             equity_data.append({
@@ -161,13 +176,14 @@ class Backtester:
 
 
         # Convert the final list of closed trades into a readable DataFrame (table) for results.
-        self.df_results = pd.DataFrame.from_dict([vars(x) for x in closed_trades]) 
+        self.df_results = pd.DataFrame.from_dict([vars(x) for x in closed_trades])
         self.df_equity = pd.DataFrame(equity_data)
         # Trade.result = 1|-1
 
-        self.calc_stats()
+        calculate_stats(self.df_results)
 
         # Save the final results table to an Excel file.
+        output_to_excel(self.df_results)
         self.output_to_excel()
 
 
@@ -232,8 +248,4 @@ class Backtester:
 
         for k,v in self.stats.items():
             print(f"{k}: {v}")
-
-        
-        
-
 

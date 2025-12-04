@@ -1,7 +1,10 @@
+from util.deprecation import deprecated
+
 BUY = 1
 SELL = -1
 NONE = None
 
+@deprecated("Please use core.types.Trade instead.")
 class Trade:
     # minimal dummy Trade class
     def __init__(self, row):
@@ -19,7 +22,7 @@ class Trade:
         self.exit_price = None
         self.pnl = None
 
-        
+
     def update(self, row):
         """
         Some logic for checking if the current row is a winner or a lsoer
@@ -38,7 +41,7 @@ class Trade:
                 self.close_trade(row, 1)
             elif row.High >= self.SL:
                 # loss
-                self.close_trade(row, -1)   
+                self.close_trade(row, -1)
 
         pass
 
@@ -55,7 +58,7 @@ class Trade:
                 self.exit_price = self.TP
             else:
                 self.exit_price = self.SL
-            
+
             self.pnl = self.exit_price - self.entry_price
 
         elif self.SIGNAL == SELL:
@@ -63,5 +66,5 @@ class Trade:
                 self.exit_price = self.TP
             else:
                 self.exit_price = self.SL
-            
+
             self.pnl = self.exit_price - self.entry_price

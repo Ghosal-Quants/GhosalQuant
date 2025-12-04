@@ -1,0 +1,16 @@
+ipykernel
+ipython
+ipywidgets
+jupyter
+jupyterlab
+matplotlib
+notebook
+numpy
+openpyxl
+pandas
+plotly
+pytest
+requests
+widgetsnbextension
+yfinance
+PyYAML
