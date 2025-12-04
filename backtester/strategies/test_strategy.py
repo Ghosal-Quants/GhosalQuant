@@ -58,3 +58,15 @@ def example_strategy(df: pd.DataFrame) -> pd.DataFrame:
     df.drop(columns=['Price_Change'], inplace=True)
 
     return df
+    
+def example_buy(df):
+    df['SIGNAL'] = 1
+    df['SL'] = 95.0
+    df['TP'] = 105.0
+    return df
+
+def example_keep_alive_two_trades(df):
+    df['SIGNAL'] = 1
+    # so we never hit sl or tp
+    df['SL'] = 0.0
+    df['TP'] = 1000.0

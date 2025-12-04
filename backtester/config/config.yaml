@@ -14,6 +14,9 @@ SYSTEM:
   # num_processes: 4
   # do we want fresh candles downloaded?
   fresh_candles: True
+  # how many open trades can exist at once
+  max_concurrent_trades: 1
+  trade_size: 1
 
 # ------------------------------------------------
 # Test Period and Range

@@ -10,13 +10,16 @@ strategy_func = Callable[[pd.DataFrame], pd.DataFrame]
 
 
 class Backtester:
-    def __init__(self, df_hour_data, df_sec_data, strategy: strategy_func):
+    def __init__(self, df_hour_data, df_sec_data, strategy: strategy_func, fixed_size=1.0, max_concurrent_trades=1):
 
         # df hour and df sec has to have index as dt obj
 
         self.df_hour_data = df_hour_data
         self.df_sec_data = df_sec_data
         self.strategy = strategy
+        # doesnt make sense to have to edit config for each run so make it go from main
+        self.fixed_size = fixed_size
+        self.max_concurrent_trades = max_concurrent_trades
 
         # prepare the data 
         self.prepare_data()
@@ -127,8 +130,8 @@ class Backtester:
             if row.SIGNAL != 0:
                 # Start a new trade object and add it to the open list
                 # if trade open then ignore new signals
-                if len(open_trades) == 0:
-                    open_trades.append(Trade(row))  
+                if len(open_trades) < self.max_concurrent_trades:
+                    open_trades.append(Trade(row, size=self.fixed_size))  
             
             # realized pnl is sum of pnl from closed trades - update after appended
             ttl_realized_pnl = 0
@@ -147,9 +150,9 @@ class Backtester:
                 # if sell, pnl = (entry price - current price) * size
 
                 if ot.SIGNAL == 1: #buy
-                    unrealized_pnl += (row.Close - ot.entry_price)
+                    unrealized_pnl += (row.Close - ot.entry_price) * ot.size
                 elif ot.SIGNAL == -1:
-                    unrealized_pnl += (ot.entry_price - row.Close)
+                    unrealized_pnl += (ot.entry_price - row.Close) * ot.size
             
             current_equity = init_capital + ttl_realized_pnl + unrealized_pnl
 

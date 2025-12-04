@@ -36,16 +36,19 @@ def run():
     if config_dict is None:
         sys.exit(1)
 
-
     # Now we have user settings we can download data 
     df_big, df_small= get_data_df(config_dict)
     print(f'{df_big=}')
     print(f'{df_small=}')
 
+    # get trade settings
+    max_open_trades = config_dict.get('SYSTEM').get('max_concurrent_trades')
+    trade_size = config_dict.get('SYSTEM').get('trade_size')
 
     # Create an instance of the backtester
     # pass in strat to backtester
-    bt = Backtester(df_big, df_small, example_strategy)
+    # run multiple backtesters all in parallel? - v2
+    bt = Backtester(df_big, df_small, example_strategy, trade_size, max_open_trades)
 
     # run the backtest
     bt.run_backtest()

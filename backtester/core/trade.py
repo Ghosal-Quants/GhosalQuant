@@ -4,10 +4,11 @@ NONE = None
 
 class Trade:
     # minimal dummy Trade class
-    def __init__(self, row):
+    def __init__(self, row, size=1):
         self.running = True # all new trades we can assume are open
         self.result = 0 # the result of the trade -> 1=win, -1=loss
         self.SIGNAL = row.SIGNAL
+        self.size = size
 
         # defined alsewhere in the strategy()
         self.TP = row.TP
@@ -17,7 +18,7 @@ class Trade:
 
         self.exit_time = None
         self.exit_price = None
-        self.pnl = None
+        self.pnl = 0.0
 
         
     def update(self, row):
@@ -56,7 +57,7 @@ class Trade:
             else:
                 self.exit_price = self.SL
             
-            self.pnl = self.exit_price - self.entry_price
+            self.pnl = (self.exit_price - self.entry_price) * self.size
 
         elif self.SIGNAL == SELL:
             if result == 1:
@@ -64,4 +65,4 @@ class Trade:
             else:
                 self.exit_price = self.SL
             
-            self.pnl = self.exit_price - self.entry_price
+            self.pnl = (self.exit_price - self.entry_price) * self.size

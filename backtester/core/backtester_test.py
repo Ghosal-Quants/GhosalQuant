@@ -4,7 +4,7 @@ from backtester import Backtester
 
 import sys, os, re
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from strategies.test_strategy import example_strategy
+from strategies.test_strategy import example_strategy, example_buy
 
 
 # GPT code 
@@ -161,3 +161,49 @@ def test_run_backtest():
 
     # check for the df_results
     # backtest_obj.df_results
+
+def test_zoom_to_sec():
+    # 1 hr and 1 sec
+    hour_data, sec_data = create_test_dfs("H1","S1")
+
+    # lets say sl was hit first before tp within 11:00 time
+    sl_time = pd.Timestamp('2025-11-15 11:15:00')
+    if sl_time in sec_data.index:
+        # inject below sl to test
+        sec_data.loc[sl_time, ['Low', 'Close']] = 90.0
+    
+    # later tps hit
+    tp_time = pd.Timestamp('2025-11-15 11:45:00')
+    if tp_time in sec_data.index:
+        sec_data.loc[tp_time, ['High', 'Close']] = 110.0
+
+    bt = Backtester(hour_data, sec_data, example_buy)
+    bt.prepare_data()
+
+    bt.apply_strategy()
+    bt.run_backtest()
+
+    results = bt.df_results
+
+    # check for trade
+    assert len(results) == 1
+
+    trade = results.iloc[0]
+
+    # should be a loss (so it detected the sl hit)
+    assert trade['result'] == -1
+
+
+def test_max_concurrent_trades():
+    # 1 hr and 1 sec
+    hour_data, sec_data = create_test_dfs("H1","S1")
+
+    bt = Backtester(hour_data, sec_data, example_buy, max_concurrent_trades=2)
+    bt.prepare_data()
+
+    bt.apply_strategy()
+    bt.run_backtest()
+
+    max_openened = bt.df_equity['open_trades'].max()
+
+    assert max_openened == 2
