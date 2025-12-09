@@ -1,0 +1,19 @@
+# Pycharm
+.idea/
+*.iml
+
+# VSC
+.vscode/
+
+# Bytecode
+__pycache__/
+*/__pycache__/
+*.pyc
+
+# Venvs
+.venv/
+venv/
+
+# Other
+.DS_Store
+.env
