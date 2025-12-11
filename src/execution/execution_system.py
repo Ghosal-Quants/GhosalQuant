@@ -1,5 +1,5 @@
 from core.types import Signal, SignalType
-from data_layer.data import DataSource
+from data_layer.datasource_base import DataSource
 from execution.strategy_base import Strategy
 from execution.sinks import SignalSink, PrintSink
 
