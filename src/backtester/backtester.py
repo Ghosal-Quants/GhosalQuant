@@ -3,7 +3,7 @@ import asyncio
 
 from execution.strategy_base import Strategy
 from execution.execution_system import ExecutionSystem
-from data_layer.data import DataSource
+from data_layer.datasource_base import DataSource
 from execution.sinks import SignalSink, BacktesterSink
 from core.types import Signal
 

@@ -1,7 +1,7 @@
 from typing import AsyncIterable, Sequence
 
 from core.types import Bar
-from data_layer.data import DataSource
+from data_layer.datasource_base import DataSource
 
 class ListDataSource(DataSource):
     def __init__(self, bars: Sequence[Bar]) -> None:
