@@ -20,7 +20,7 @@ def output_to_excel(df_results: pd.DataFrame) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # save in results/trades
-    filename = f"backtest_results_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx"
+    filename = f"backtest_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
     filepath = out_dir / filename
 
     if df_results.empty:
