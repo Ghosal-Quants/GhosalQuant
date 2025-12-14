@@ -34,10 +34,11 @@ class ExecutionSystem:
                 if signal is None:
                     continue
 
+                
                 # Strategy emitted an explicit NOOP signal
                 # (meaning "hold" / "no action")
-                if (self.ignore_noop_signals) and (signal.signal_type is SignalType.NOOP):
-                    continue
+                # if (self.ignore_noop_signals) and (signal.signal_type is None):
+                #     continue
 
                 # Actionable signal: send to sink
                 await self.sig_sink.on_signal(signal)

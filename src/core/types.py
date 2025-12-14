@@ -17,13 +17,12 @@ class Bar:
 class SignalType(str, Enum):
     BUY = 'BUY'
     SELL = 'SELL'
-    NOOP = 'NOOP'
 
 @dataclass(frozen=True, slots=True)
 class Signal:
     time_stamp: datetime
     symbol: str
-    signal_type: SignalType
+    signal_type: SignalType | None 
     price: float
     confidence: float = 1.0
     quantity: float | None = None
@@ -62,7 +61,7 @@ class Trade:
 
     def unrealised_pnl(self, current_price: float) -> float:
         # PnL is not applicable for trades where no operation was performed
-        if self.signal_type is SignalType.NOOP:
+        if self.signal_type is None:
             return 0.0
 
         # sign of pnl for BUY is always +1 (win), for SELL is always -1 (win)

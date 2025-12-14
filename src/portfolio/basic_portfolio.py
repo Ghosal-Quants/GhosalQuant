@@ -25,7 +25,7 @@ class BasicPortfolio(Portfolio):
     async def process_signal(self, signal: Signal) -> None:
         signal_type: SignalType = signal.signal_type
 
-        if signal_type == SignalType.NOOP:
+        if signal is None or signal_type is None:
             return
 
         if signal_type == SignalType.BUY:

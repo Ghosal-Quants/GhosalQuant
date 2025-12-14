@@ -38,7 +38,7 @@ class DataFrameBacktester(Backtester):
     ) -> None:
         # Duplicate the initial DataFrame and initialise signal and confidence columns
         self._return_df = dataframe.copy()
-        self._return_df[signal_col] = SignalType.NOOP.value
+        self._return_df[signal_col] = None
         self._return_df[confidence_col] = 0.0
         self._return_df[quantity_col] = 0.0
 
@@ -72,7 +72,7 @@ class DataFrameBacktester(Backtester):
         return self._return_df
 
     async def handle_signal(self, signal: Signal) -> None:
-        if signal.signal_type == SignalType.NOOP:
+        if signal is None or signal.signal_type is None:
             return
 
         if signal.quantity is None:
