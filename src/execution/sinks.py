@@ -141,7 +141,7 @@ class RiskManagerSink(SignalSink):
         self._open_positions = 0
 
     async def on_signal(self, signal: Signal) -> None:
-        if signal.signal_type is SignalType.NOOP:
+        if (signal is None) or (signal.signal_type is None):
             return
         
 

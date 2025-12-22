@@ -14,13 +14,11 @@ class ExecutionSystem:
             data_src: DataSource,
             strategy: Strategy,
             signal_destination: SignalSink | None = None,
-            ignore_noop_signals: bool = True
     ) -> None:
 
         self.data_src = data_src
         self.strategy = strategy
         self.sig_sink = signal_destination or PrintSink() # Backtester / Broker - Print by default
-        self.ignore_noop_signals = ignore_noop_signals
 
     async def run(self) -> None:
         self.strategy.on_start()

@@ -30,7 +30,7 @@ class RiskManagerBacktester(Backtester):
     ) -> None:
         # Duplicate the initial DataFrame and initialise the columns
         self._return_df = dataframe.copy()
-        self._return_df[signal_col] = SignalType.NOOP.value
+        self._return_df[signal_col] = None
         self._return_df[confidence_col] = 0.0
         self._return_df[quantity_col] = 0.0
 
