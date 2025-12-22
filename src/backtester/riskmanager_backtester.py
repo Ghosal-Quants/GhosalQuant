@@ -8,8 +8,10 @@ from core.types import SignalType, Signal
 from execution.strategy_base import Strategy
 from data_layer.dataframe_datasource import DataFrameDataSource
 from execution.sinks import DataFrameSink, RiskManagerSink
+from util.deprecation import deprecated
 
 
+@deprecated("Risk management is now handled by a separate module. Use DataFrameBacktester or another Backtester instead.")
 class RiskManagerBacktester(Backtester):
     def __init__(
         self,

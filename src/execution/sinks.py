@@ -5,6 +5,8 @@ import pandas as pd
 from dataclasses import replace
 import math
 
+from util.deprecation import deprecated
+
 
 async def _pass_to_next(next_sink: SignalSink | None, signal: Signal) -> None:
     if next_sink is not None:
@@ -120,7 +122,7 @@ class BrokerSink(SignalSink):
     async def on_signal(self, signal: Signal) -> None:
         raise NotImplementedError("BrokerSink is not implemented yet.")
 
-
+@deprecated("Risk management is now handled independently. Use RiskManager module instead.")
 class RiskManagerSink(SignalSink):
     def __init__(
             self, 

@@ -26,10 +26,10 @@ class ExampleStrategy(Strategy):
     def on_end(self):
         ...
 
-    def on_market_data(self, bar: Bar) -> Signal:
+    def on_market_data(self, bar: Bar) -> Signal | None:
         if self.prev_bar is None:
             self.prev_bar = bar
-            return Signal(signal_type=SignalType.NOOP, time_stamp=bar.time_stamp, symbol=bar.symbol, price=bar.close)
+            return None
 
         signal_type: SignalType
 
@@ -39,7 +39,7 @@ class ExampleStrategy(Strategy):
             signal_type = SignalType.BUY
         else:
             self.prev_bar = bar
-            return Signal(signal_type=SignalType.NOOP, time_stamp=bar.time_stamp, symbol=bar.symbol, price=bar.close)
+            return None
 
         self.prev_bar = bar
         confidence = 0.99                                                 # Actual strategies would employ more robust confidence calculations

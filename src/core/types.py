@@ -17,7 +17,6 @@ class Bar:
 class SignalType(str, Enum):
     BUY = 'BUY'
     SELL = 'SELL'
-    NOOP = 'NOOP'
 
 @dataclass(frozen=True, slots=True)
 class Signal:
@@ -30,6 +29,9 @@ class Signal:
     metadata: dict[str, Any] | None = None
 
     def __post_init__(self):
+        if not isinstance(self.signal_type, SignalType):
+            raise TypeError("Signal type must be a SignalType")
+
         if not (0.0 <= self.confidence <= 1.0):
             raise ValueError("Confidence must be between 0.0 and 1.0")
 
@@ -48,6 +50,26 @@ class Signal:
 
     def __repr__(self) -> str:
         return str(self)
+
+@dataclass(frozen=True, slots=True)
+class Order:
+    time_stamp: datetime
+    symbol: str
+    side: SignalType
+    quantity: float
+    price: float
+    metadata: dict[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.quantity, (int, float)):
+            raise TypeError("Order quantity must be numeric")
+
+        if self.quantity <= 0:
+            raise ValueError("Order quantity must be > 0")
+
+        if not isinstance(self.price, (int, float)):
+            raise TypeError("Order price must be numeric")
+
 
 @dataclass
 class Trade:
