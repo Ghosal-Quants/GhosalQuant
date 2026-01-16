@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Protocol, Iterable
 
-from core.types import Trade, EquityPoint, Signal
+from ..core.types import Trade, EquityPoint, Signal
 
 
 class Portfolio(Protocol):

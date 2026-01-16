@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 
-from core.types import Bar
-from core.types import Signal
+from ..core.types import Bar
+from ..core.types import Signal
 
 class Strategy(ABC):
     def __init__(

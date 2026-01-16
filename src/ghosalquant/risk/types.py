@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Protocol
 
-from core.types import SignalType, Order
+from ..core.types import SignalType, Order
 
 @dataclass(slots=True)
 class OrderDraft:

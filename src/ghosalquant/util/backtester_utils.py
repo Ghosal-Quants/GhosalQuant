@@ -2,8 +2,8 @@ import pandas as pd
 from datetime import datetime
 from pathlib import Path
 
-from core.types import BacktestKPMs, SignalType
-from util.deprecation import deprecated
+from ..core.types import BacktestKPMs, SignalType
+from ..util.deprecation import deprecated
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 

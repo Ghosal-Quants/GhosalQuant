@@ -1,4 +1,4 @@
-from risk.types import RiskRule, OrderDraft, RiskContext
+from ..types import RiskRule, OrderDraft, RiskContext
 
 def lerp(a: float, b: float, t: float) -> float:
     if t < 0.0:

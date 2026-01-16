@@ -1,5 +1,5 @@
-from core.types import SignalType
-from risk.types import RiskRule, OrderDraft, RiskContext
+from ...core.types import SignalType
+from ..types import RiskRule, OrderDraft, RiskContext
 
 class MaxOpenPositions(RiskRule):
     def __init__(self, max_open_positions: int = 3) -> None:

@@ -1,11 +1,11 @@
 from __future__ import annotations
 from typing import Protocol
-from core.types import Signal, SignalType
 import pandas as pd
 from dataclasses import replace
 import math
 
-from util.deprecation import deprecated
+from ..core.types import Signal, SignalType
+from ..util.deprecation import deprecated
 
 
 async def _pass_to_next(next_sink: SignalSink | None, signal: Signal) -> None:
@@ -143,9 +143,8 @@ class RiskManagerSink(SignalSink):
         self._open_positions = 0
 
     async def on_signal(self, signal: Signal) -> None:
-        if signal.signal_type is SignalType.NOOP:
+        if signal.signal_type is None:
             return
-        
 
         if signal.confidence >= self._confidence_threshold:
             qty = self._max_qty

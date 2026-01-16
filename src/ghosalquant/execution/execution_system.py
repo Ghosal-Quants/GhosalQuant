@@ -1,9 +1,9 @@
-from core.types import Signal, SignalType, Order
-from data_layer.datasource_base import DataSource
-from execution.strategy_base import Strategy
-from execution.sinks import SignalSink, PrintSink
-from risk.risk_manager import RiskManager
-from risk.types import RiskContext
+from ..core.types import Signal, SignalType, Order
+from ..data_layer.datasource_base import DataSource
+from ..execution.strategy_base import Strategy
+from ..execution.sinks import SignalSink, PrintSink
+from ..risk.risk_manager import RiskManager
+from ..risk.types import RiskContext
 
 
 # ExecutionSystem coordinates the backtesting loop:

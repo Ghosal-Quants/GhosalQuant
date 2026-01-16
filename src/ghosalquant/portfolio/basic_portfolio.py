@@ -1,8 +1,8 @@
 from datetime import datetime
 from typing import Iterable
 
-from core.types import Trade, EquityPoint, Signal, SignalType
-from portfolio.portfolio_base import Portfolio
+from ..core.types import Trade, EquityPoint, Signal, SignalType
+from ..portfolio.portfolio_base import Portfolio
 
 
 class BasicPortfolio(Portfolio):

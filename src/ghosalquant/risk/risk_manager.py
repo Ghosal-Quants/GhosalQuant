@@ -1,11 +1,11 @@
 from typing import Iterable
 
-from core.types import Signal, SignalType, Order
-from risk.types import OrderDraft, RiskRule, RiskContext
+from ..core.types import Signal, SignalType, Order
+from ..risk.types import OrderDraft, RiskRule, RiskContext
 
 # Rules
-from risk.rules.rule_max_open_positions import MaxOpenPositions
-from risk.rules.rule_confidence_sizer import ConfidenceSizer
+from ..risk.rules.rule_max_open_positions import MaxOpenPositions
+from ..risk.rules.rule_confidence_sizer import ConfidenceSizer
 
 
 class RiskManager:

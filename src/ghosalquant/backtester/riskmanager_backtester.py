@@ -1,14 +1,14 @@
 import asyncio
 from doctest import UnexpectedException
-
+import pandas as pd
 from pandas import DataFrame
 
-from backtester.backtester import Backtester
-from core.types import SignalType, Signal
-from execution.strategy_base import Strategy
-from data_layer.dataframe_datasource import DataFrameDataSource
-from execution.sinks import DataFrameSink, RiskManagerSink
-from util.deprecation import deprecated
+from .backtester import Backtester
+from ..core.types import SignalType, Signal
+from ..execution.strategy_base import Strategy
+from ..data_layer.dataframe_datasource import DataFrameDataSource
+from ..execution.sinks import DataFrameSink, RiskManagerSink
+from ..util.deprecation import deprecated
 
 
 @deprecated("Risk management is now handled by a separate module. Use DataFrameBacktester or another Backtester instead.")
@@ -32,7 +32,7 @@ class RiskManagerBacktester(Backtester):
     ) -> None:
         # Duplicate the initial DataFrame and initialise the columns
         self._return_df = dataframe.copy()
-        self._return_df[signal_col] = SignalType.NOOP.value
+        self._return_df[signal_col] = pd.NA
         self._return_df[confidence_col] = 0.0
         self._return_df[quantity_col] = 0.0
 

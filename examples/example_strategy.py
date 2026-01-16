@@ -1,5 +1,5 @@
-from execution.strategy_base import Strategy
-from core.types import Bar, Signal, SignalType
+from ghosalquant import Strategy
+from ghosalquant.core.types import Bar, Signal, SignalType
 
 
 class ExampleStrategy(Strategy):
