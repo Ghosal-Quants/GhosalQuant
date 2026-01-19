@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Iterable
 
-from ..core.types import Trade, EquityPoint, Signal, SignalType
+from ..core.types import Trade, EquityPoint, Order, SignalType
 from ..portfolio.portfolio_base import Portfolio
 
 
@@ -9,6 +9,7 @@ class BasicPortfolio(Portfolio):
     """
     A basic portfolio implementation which handles opening and closing trades. Note that it assumes liquid markets.
     """
+
     def __init__(self, init_capital: float = 10_000.0) -> None:
         self._init_capital: float = init_capital
 
@@ -17,24 +18,30 @@ class BasicPortfolio(Portfolio):
         self._open_trades: dict[str, dict[int, Trade]] = {}
         self._closed_trades: list[Trade] = []
 
-        self._next_trade_id: int = 0 # start indexing trades from 0
+        self._next_trade_id: int = 0  # start indexing trades from 0
         self._realised_pnl: float = 0.0
         self._equity_points: list[EquityPoint] = []
 
+    async def process_order(self, order: Order) -> None:
+        order_type: SignalType = order.side
 
-    async def process_signal(self, signal: Signal) -> None:
-        signal_type: SignalType = signal.signal_type
-
-        if signal_type is None:
+        if order_type is None:
             return
 
-        if signal_type == SignalType.BUY:
-            self._open(signal)
-        elif signal_type == SignalType.SELL:
-            self._close(signal)
-        else:
-            raise ValueError(f"Unsupported signal type: {signal_type}")
+        if order.quantity is None:
+            raise ValueError("Order quantity cannot be None")
 
+        if order_type == SignalType.BUY:
+            self._open(order)
+        elif order_type == SignalType.SELL:
+            self._close(order)
+        else:
+            raise ValueError(f"Unsupported order type: {order_type}")
+
+        self.snapshot_equity(
+            time_stamp= order.time_stamp,
+            prices={order.symbol: order.price}
+        )
 
     def snapshot_equity(self, time_stamp: datetime, prices: dict[str, float]) -> None:
         unrealised_pnl: float = 0.0
@@ -54,70 +61,65 @@ class BasicPortfolio(Portfolio):
 
         self._equity_points.append(
             EquityPoint(
-                time_stamp= time_stamp,
-                equity= equity,
-                realised_pnl= self._realised_pnl,
-                unrealised_pnl= unrealised_pnl,
+                time_stamp=time_stamp,
+                equity=equity,
+                realised_pnl=self._realised_pnl,
+                unrealised_pnl=unrealised_pnl,
                 num_open_trades=sum(len(t) for t in self._open_trades.values()),
             )
         )
-
 
     @property
     def closed_trades(self) -> Iterable[Trade]:
         return self._closed_trades
 
-
     @property
     def equity_curve(self) -> Iterable[EquityPoint]:
         return self._equity_points
-
 
     @property
     def realised_pnl(self) -> float:
         return self._realised_pnl
 
-
     # Helpers -------
-    def _open(self, signal: Signal) -> None:
-        if signal.quantity is None:
-            raise ValueError("Signal quantity cannot be None")
+    def _open(self, order: Order) -> None:
+        if order.quantity is None:
+            raise ValueError("Order quantity cannot be None")
 
         trade_id: int = self._next_trade_id
         self._next_trade_id += 1
 
         trade = Trade(
             id=trade_id,
-            symbol=signal.symbol,
+            symbol=order.symbol,
             signal_type=SignalType.BUY,
-            entry_price=signal.price,
-            size=signal.quantity,
-            open_time=signal.time_stamp
+            entry_price=order.price,
+            size=order.quantity,
+            open_time=order.time_stamp
         )
-        if signal.symbol not in self._open_trades:
-            self._open_trades[signal.symbol] = {}
+        if order.symbol not in self._open_trades:
+            self._open_trades[order.symbol] = {}
 
-        self._open_trades[signal.symbol][trade_id] = trade
+        self._open_trades[order.symbol][trade_id] = trade
 
+    def _close(self, order: Order) -> None:
+        if order.quantity is None:
+            raise ValueError("Order quantity cannot be None")
 
-    def _close(self, signal: Signal) -> None:
-        if signal.quantity is None:
-            raise ValueError("Signal quantity cannot be None")
-
-        symbol: str = signal.symbol
+        symbol: str = order.symbol
         trades: dict = self._open_trades.get(symbol)
         if not trades:
             # Ideally this should raise an error, but strategies might not be that smart
-            # raise RuntimeError(f"SELL signal received for {symbol}, but no open trades exist.")
+            # raise RuntimeError(f"SELL order received for {symbol}, but no open trades exist.")
             return
 
-        close_qty: float = signal.quantity
-        close_price: float = signal.price
-        time: datetime = signal.time_stamp
+        close_qty: float = order.quantity
+        close_price: float = order.price
+        time: datetime = order.time_stamp
 
-        trade_ids_in_order = sorted(trades.keys(), reverse=True) # LIFO
+        trade_ids_in_order = sorted(trades.keys(), reverse=True)  # LIFO
 
-        for trade_id in trade_ids_in_order: # Close multiple trades if needed, in order to satisfy quantity
+        for trade_id in trade_ids_in_order:  # Close multiple trades if needed, in order to satisfy quantity
             if close_qty <= 0:
                 break
 

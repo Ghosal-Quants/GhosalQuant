@@ -28,16 +28,6 @@ class PrintSink(SignalSink):
         await _pass_to_next(self._next_sink, signal)
 
 
-class BacktesterSink(SignalSink):
-    def __init__(self, backtester, next_sink: SignalSink | None = None) -> None:
-        super().__init__(next_sink)
-        self.backtester = backtester
-
-    async def on_signal(self, signal: Signal) -> None:
-        await self.backtester.handle_signal(signal)
-        await _pass_to_next(self._next_sink, signal)
-
-
 class DataFrameSink(SignalSink):
     def __init__(
             self,
@@ -114,69 +104,6 @@ class DataFrameSink(SignalSink):
 
     def get_dataframe(self) -> pd.DataFrame:
         return self._dataframe
-
-
-class BrokerSink(SignalSink):
-    def __init__(self, next_sink: SignalSink = None):
-        super().__init__(next_sink)
-    async def on_signal(self, signal: Signal) -> None:
-        raise NotImplementedError("BrokerSink is not implemented yet.")
-
-@deprecated("Risk management is now handled independently. Use RiskManager module instead.")
-class RiskManagerSink(SignalSink):
-    def __init__(
-            self, 
-            next_sink:SignalSink, 
-            confidence_threshold: float = 0.5, 
-            max_qty: int = 10,
-            min_qty: int = 0,
-            max_open_positions: int = 3,
-    ) -> None:
-        super().__init__(next_sink)
-        self._confidence_threshold = confidence_threshold
-        self._max_qty = max_qty
-        self._min_qty = min_qty
-        self._max_open_positions = max_open_positions
-        self._max_open_quantity = self._max_open_positions * self._max_qty
-
-        self._open_quantity = 0
-        self._open_positions = 0
-
-    async def on_signal(self, signal: Signal) -> None:
-        if signal.signal_type is None:
-            return
-
-        if signal.confidence >= self._confidence_threshold:
-            qty = self._max_qty
-        else:
-            qty = self._min_qty
-        
-
-        if signal.signal_type is SignalType.BUY:
-            if self._open_positions >= self._max_open_positions:
-                print("[RiskManger] Blocked BUY: max open trades reached")
-                return
-            if self._open_quantity + qty > self._max_open_quantity:
-                print("[RiskManger] Blocked BUY: total quanity limit exceeded")
-                return
-
-            self._open_positions += 1
-            self._open_quantity += qty
-
-        elif signal.signal_type is SignalType.SELL:
-            if self._open_quantity == 0:
-                print("[RiskManager] Blocked SELL: cannot sell ", qty, " only", self._open_quantity, " is available") 
-                return
-            
-            qty = min(qty, self._open_quantity)
-            self._open_quantity -= qty
-            self._open_positions = 0 if self._open_quantity == 0 else math.ceil(self._open_quantity / self._max_qty)
-            
-
-        adjusted_signal = replace(signal, quantity=qty)
-
-        await self._next_sink.on_signal(adjusted_signal)
-        await _pass_to_next(self._next_sink, signal)
 
 
 class ListSink(SignalSink):

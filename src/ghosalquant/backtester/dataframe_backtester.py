@@ -4,10 +4,10 @@ from pandas import DataFrame
 import pandas as pd
 
 from ..backtester.backtester import Backtester
-from ..core.types import SignalType, Signal
+from ..core.types import Order
 from ..execution.strategy_base import Strategy
 from ..data_layer.dataframe_datasource import DataFrameDataSource
-from ..execution.sinks import DataFrameSink, BacktesterSink
+from ..execution.sinks import DataFrameSink
 from ..portfolio.basic_portfolio import BasicPortfolio
 from ..util.backtester_utils import calculate_stats, output_to_excel
 from ..util.config import load_config
@@ -67,28 +67,15 @@ class DataFrameBacktester(Backtester):
                 timestamp_col= timestamp_col,
                 signal_col= signal_col,
                 confidence_col= confidence_col,
-                quantity_col= quantity_col,
-                next_sink=BacktesterSink(self)
+                quantity_col= quantity_col
             )
         )
 
+    def handle_order(self, order: Order) -> None:
+        return self._portfolio.process_order(order)
+
     def get_return_dataframe(self) -> DataFrame:
         return self._return_df
-
-    async def handle_signal(self, signal: Signal) -> None:
-        if signal.signal_type is None:
-            return
-
-        if signal.quantity is None:
-            raise ValueError("Signal quantity cannot be None")
-
-        await self._portfolio.process_signal(signal=signal)
-
-        if (signal.signal_type == SignalType.SELL) or (signal.signal_type == SignalType.BUY):
-            self._portfolio.snapshot_equity(
-                time_stamp=signal.time_stamp,
-                prices={signal.symbol: signal.price},
-            )
 
 
     def run(self) -> DataFrame:
