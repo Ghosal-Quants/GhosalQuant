@@ -19,6 +19,9 @@ class DataFrameDataSource(DataSource):
             close_col: str = "Close",
             volume_col: str = "Volume",
     ) -> None:
+        if symbol is None or symbol.strip() == "":
+            raise ValueError("A symbol must be provided.")
+
         self.df = dataframe
         self.symbol = symbol
         self.timestamp_col = timestamp_col

@@ -6,16 +6,28 @@ from ..execution.execution_system import ExecutionSystem
 from ..data_layer.datasource_base import DataSource
 from ..execution.sinks import SignalSink, BacktesterSink
 from ..core.types import Signal
+from ..risk.builder import build_risk_manager
+from ..risk.risk_manager import RiskManager
+from ..util.config import Config, load_config
 
 class Backtester(ABC):
     def __init__(
             self,
             strategy: Strategy,
             data_src: DataSource,
+            config_path: str | None = None,
+            config: Config | None = None,
             signal_destination: SignalSink | None = None
     ) -> None:
         self.strategy = strategy
         self.data_src = data_src
+
+        if config is None:
+            if config_path is None:
+                raise ValueError("Either config_path or config needs to be passed.")
+            self.config: Config = load_config(config_path)
+        else:
+            self.config = config
 
         if signal_destination is None:
             sink: SignalSink = BacktesterSink(self)
@@ -25,7 +37,8 @@ class Backtester(ABC):
         self.execution_system = ExecutionSystem(
             data_src = self.data_src,
             strategy = self.strategy,
-            signal_destination = sink
+            signal_destination = sink,
+            risk_manager=build_risk_manager(self.config.risk)
         )
 
     @abstractmethod

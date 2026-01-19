@@ -42,7 +42,7 @@ class ExampleStrategy(Strategy):
             return None
 
         self.prev_bar = bar
-        confidence = 0.99                                                 # Actual strategies would employ more robust confidence calculations
+        confidence = 1.0                                                  # Actual strategies would employ more robust confidence calculations
         quantity = super().calculate_quantity(confidence= confidence)     # Basic quantity calculator in base class or strategies can override it and implement their own 
 
         # Handle stop loss and take profit levels only for BUY/SELL

@@ -1,6 +1,7 @@
 import asyncio
 from datetime import datetime
 from pandas import DataFrame
+import pandas as pd
 
 from ..backtester.backtester import Backtester
 from ..core.types import SignalType, Signal
@@ -9,18 +10,19 @@ from ..data_layer.dataframe_datasource import DataFrameDataSource
 from ..execution.sinks import DataFrameSink, BacktesterSink
 from ..portfolio.basic_portfolio import BasicPortfolio
 from ..util.backtester_utils import calculate_stats, output_to_excel
-
+from ..util.config import load_config
 
 class DataFrameBacktester(Backtester):
     def __init__(
             self,
             strategy: Strategy,
             dataframe: DataFrame,
+            config_path: str,
 
             timestamp_col: str | None = None,
             # DataFrame format:
             *,
-            symbol: str,
+            symbol: str | None = None,
             open_col: str   = "Open",
             high_col: str   = "High",
             low_col: str    = "Low",
@@ -35,21 +37,23 @@ class DataFrameBacktester(Backtester):
             # Backtesting
             init_capital: float = 10_000.0
     ) -> None:
+        config = load_config(config_path)
+
         # Duplicate the initial DataFrame and initialise signal and confidence columns
         self._return_df = dataframe.copy()
-        self._return_df[signal_col] = SignalType.NOOP.value
+        self._return_df[signal_col] = pd.NA
         self._return_df[confidence_col] = 0.0
         self._return_df[quantity_col] = 0.0
 
         # Backtesting variables
-        self._symbol = symbol
+        self._symbols: list[str] = config.system.symbols
         self._portfolio = BasicPortfolio(init_capital=init_capital)
 
         super().__init__(
             strategy=strategy,
             data_src=DataFrameDataSource(
                 dataframe=dataframe,
-                symbol= symbol,
+                symbol= config.system.symbols[0],
                 timestamp_col= timestamp_col,
                 open_col= open_col,
                 high_col= high_col,
@@ -57,6 +61,7 @@ class DataFrameBacktester(Backtester):
                 close_col= close_col,
                 volume_col= volume_col
             ),
+            config= config,
             signal_destination=DataFrameSink(
                 dataframe= self._return_df,
                 timestamp_col= timestamp_col,
@@ -71,7 +76,7 @@ class DataFrameBacktester(Backtester):
         return self._return_df
 
     async def handle_signal(self, signal: Signal) -> None:
-        if signal.signal_type == SignalType.NOOP:
+        if signal.signal_type is None:
             return
 
         if signal.quantity is None:

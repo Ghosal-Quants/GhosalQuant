@@ -70,6 +70,16 @@ class Order:
         if not isinstance(self.price, (int, float)):
             raise TypeError("Order price must be numeric")
 
+    def __str__(self) -> str:
+        return (
+                f"Side: {self.side.value}, "
+                +f"Timestamp: {self.time_stamp}, "
+                +f"Symbol: {self.symbol}, "
+                +f"Quantity: {self.quantity}, "
+                +f"Price: {self.price}"
+                +(", Metadata: " + str(self.metadata) if self.metadata is not None else "")
+        )
+
 
 @dataclass
 class Trade:
@@ -84,7 +94,7 @@ class Trade:
 
     def unrealised_pnl(self, current_price: float) -> float:
         # PnL is not applicable for trades where no operation was performed
-        if self.signal_type is SignalType.NOOP:
+        if self.signal_type is None:
             return 0.0
 
         # sign of pnl for BUY is always +1 (win), for SELL is always -1 (win)

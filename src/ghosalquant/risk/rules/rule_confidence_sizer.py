@@ -18,4 +18,6 @@ class ConfidenceSizer(RiskRule):
 
         draft.quantity = float(lerp(self.min_quantity, self.max_quantity, confidence))
 
+        if draft.quantity == 0.0:
+            print("[ConfidenceSizer] BLOCKED: Confidence too low.")
         return draft.quantity > 0.0

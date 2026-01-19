@@ -1,9 +1,8 @@
-from execution.execution_system import ExecutionSystem
+from ghosalquant.execution.execution_system import ExecutionSystem
 from example_strategy import ExampleStrategy
-from data_layer.yfinance_datasource import YFinanceDataSource
-from execution.sinks import PrintSink
+from ghosalquant.data_layer.yfinance_datasource import YFinanceDataSource
+from ghosalquant.execution.sinks import PrintSink
 import asyncio
-from datetime import datetime
 
 if __name__ == "__main__":
     print("Example Implementation With Just Print: ")

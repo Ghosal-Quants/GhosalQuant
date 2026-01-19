@@ -6,8 +6,7 @@ class MaxOpenPositions(RiskRule):
         self.max_open_positions = max_open_positions
 
     def apply(self, draft: OrderDraft, context: RiskContext) -> bool:
-        if draft.side == SignalType.BUY:
-            if RiskContext.open_positions >= self.max_open_positions:
+        if (draft.side == SignalType.BUY) and (context.open_positions >= self.max_open_positions):
                 print(f"[MaxOpenPositions] Blocked BUY for {draft.symbol}: max open positions reached ({self.max_open_positions})")
                 return False
         else:

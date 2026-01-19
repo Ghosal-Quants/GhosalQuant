@@ -45,7 +45,8 @@ class ExecutionSystem:
                 await self.sig_sink.on_signal(signal)
 
                 if self.risk_manager:
+                    order: Order = self.risk_manager.evaluate(signal, RiskContext())
+                    print("Order:", str(order))
                     raise NotImplementedError("Risk manager integration is not fully implemented yet.")
-                    # order: Order = self.risk_manager.evaluate(signal, RiskContext())
         finally:
             self.strategy.on_end()

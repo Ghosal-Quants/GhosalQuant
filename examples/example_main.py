@@ -2,9 +2,7 @@ import yfinance as yf
 import pandas as pd
 
 from example_strategy import ExampleStrategy
-from ghosalquant.data_layer.dataframe_datasource import DataFrameDataSource
 from ghosalquant.backtester.dataframe_backtester import DataFrameBacktester
-from ghosalquant.backtester.riskmanager_backtester import RiskManagerBacktester
 
 
 if __name__ == "__main__":
@@ -16,11 +14,10 @@ if __name__ == "__main__":
     # Download OHLCV data
     df: pd.DataFrame = yf.download("AAPL", start="2020-01-01", end="2020-01-31", auto_adjust=True, progress=False)
 
-    # Initialise backtester with RiskManager
-    backtester = RiskManagerBacktester(
+    backtester = DataFrameBacktester(
         strategy=strategy,
         dataframe=df,
-        symbol="AAPL",
+        config_path="config.yaml"
     )
 
     # Run backtester
