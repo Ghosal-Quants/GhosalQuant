@@ -8,11 +8,11 @@ from ghosalquant.util.visualisation import plot_equity_curve
 if __name__ == "__main__":
     print("Example Implementation With DataFrameBacktester: ")
 
-    # strategy receives market data and produces buy/sell signal
+    # strategy receives bars and produces directional intent signals (BUY / SELL)
     strategy = ExampleStrategy()
 
     # Download OHLCV data
-    df: pd.DataFrame = yf.download("AAPL", start="2020-01-01", end="2020-01-31", auto_adjust=True, progress=False)
+    df: pd.DataFrame = yf.download("AAPL", start="2024-01-01", end="2025-12-31", auto_adjust=True, progress=False)
 
     backtester = DataFrameBacktester(
         strategy=strategy,
@@ -20,7 +20,7 @@ if __name__ == "__main__":
         config_path="config.yaml"
     )
 
-    # Run backtester
+    # Run backtester and get key performance metrics
     kpms = backtester.run()
     df2: pd.DataFrame = backtester.dataframe
 
