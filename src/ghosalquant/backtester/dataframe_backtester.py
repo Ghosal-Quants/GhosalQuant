@@ -39,8 +39,23 @@ class DataFrameBacktester(Backtester):
     ) -> None:
         config = load_config(config_path)
 
+        df = dataframe.copy()
+
+        if isinstance(df.columns, pd.MultiIndex): # Flatten MultiIndex if present
+            required = {open_col, high_col, low_col, close_col, volume_col}
+
+            levels = [set(map(str, df.columns.get_level_values(i))) for i in range(df.columns.nlevels)]
+            level_with_required = None
+            for i, vals in enumerate(levels):
+                if required.issubset(vals):
+                    level_with_required = i
+                    break
+
+            if level_with_required is not None:
+                df.columns = df.columns.get_level_values(level_with_required)
+
         # Duplicate the initial DataFrame and initialise signal and confidence columns
-        self._return_df = dataframe.copy()
+        self._return_df = df
         self._return_df[signal_col] = pd.NA
         self._return_df[confidence_col] = 0.0
         self._return_df[quantity_col] = 0.0
@@ -52,7 +67,7 @@ class DataFrameBacktester(Backtester):
         super().__init__(
             strategy=strategy,
             data_src=DataFrameDataSource(
-                dataframe=dataframe,
+                dataframe=df,
                 symbol= config.system.symbols[0],
                 timestamp_col= timestamp_col,
                 open_col= open_col,
@@ -71,16 +86,14 @@ class DataFrameBacktester(Backtester):
             )
         )
 
-    def handle_order(self, order: Order) -> None:
-        self._portfolio.process_order(order)
+    async def handle_order(self, order: Order) -> None:
+        await self._portfolio.process_order(order)
 
     def get_return_dataframe(self) -> DataFrame:
         return self._return_df
 
-
     def run(self) -> DataFrame:
-        # ExecutionSystem.run() is an async routine so it must be run
-        # with asyncio.run() to start the event loop
+        # ExecutionSystem.run() is an async routine so it must be run with asyncio.run() to start the event loop
         asyncio.run(self.execution_system.run())
 
         #if self.df_results is not None:

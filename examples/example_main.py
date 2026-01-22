@@ -6,7 +6,7 @@ from ghosalquant.backtester.dataframe_backtester import DataFrameBacktester
 
 
 if __name__ == "__main__":
-    print("Example Implementation With RiskManagerBacktester: ")
+    print("Example Implementation With DataFrameBacktester: ")
 
     # strategy receives market data and produces buy/sell signal
     strategy = ExampleStrategy()
