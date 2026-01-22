@@ -72,7 +72,7 @@ class DataFrameBacktester(Backtester):
         )
 
     def handle_order(self, order: Order) -> None:
-        return self._portfolio.process_order(order)
+        self._portfolio.process_order(order)
 
     def get_return_dataframe(self) -> DataFrame:
         return self._return_df

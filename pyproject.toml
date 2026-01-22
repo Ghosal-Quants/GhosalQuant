@@ -13,7 +13,8 @@ dependencies = [
     "pandas",
     "requests",
     "yfinance",
-    "PyYAML"
+    "PyYAML",
+    "dotenv"
 ]
 
 [project.optional-dependencies]

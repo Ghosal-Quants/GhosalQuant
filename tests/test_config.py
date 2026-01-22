@@ -7,9 +7,9 @@ def test_load_config():
     assert isinstance(config.system, SystemConfig)
     assert isinstance(config.time_range, TimeConfig)
 
-    assert config.system.symbols == ["AAPL"]
-    assert config.system.main_timeframe == "H1"
-    assert config.system.execution_timeframe == "M5"
+    assert config.system.symbols == ["AAPL", "MSFT"]
+    assert config.system.main_timeframe == "1H"
+    assert config.system.execution_timeframe == "5Min"
     assert config.system.fresh_data is True
 
     assert config.time_range.start_date.isoformat() == "2023-01-01"

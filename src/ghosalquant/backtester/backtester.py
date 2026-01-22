@@ -29,15 +29,10 @@ class Backtester(ABC):
         else:
             self.config = config
 
-        if signal_destination is None:
-            sink: SignalSink = BacktesterSink(self)
-        else:
-            sink = signal_destination
-
         self.execution_system = ExecutionSystem(
             data_src = self.data_src,
             strategy = self.strategy,
-            signal_destination = sink,
+            signal_destination = signal_destination,
             risk_manager=build_risk_manager(self.config.risk)
         )
 

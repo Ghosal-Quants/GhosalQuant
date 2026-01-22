@@ -14,3 +14,4 @@ requests
 widgetsnbextension
 yfinance
 PyYAML
+dotenv

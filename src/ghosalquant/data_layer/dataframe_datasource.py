@@ -11,7 +11,8 @@ class DataFrameDataSource(DataSource):
             self,
             dataframe: DataFrame,
             *,
-            symbol: str,
+            symbol: str | None = None,
+            symbol_col: str | None = None,
             timestamp_col: str | None = None,
             open_col: str = "Open",
             high_col: str = "High",
@@ -19,11 +20,12 @@ class DataFrameDataSource(DataSource):
             close_col: str = "Close",
             volume_col: str = "Volume",
     ) -> None:
-        if symbol is None or symbol.strip() == "":
-            raise ValueError("A symbol must be provided.")
+        if (symbol is None or symbol.strip() == "") and symbol_col is None:
+            raise ValueError("A symbol or symbol column (symbol_col) must be provided.")
 
         self.df = dataframe
         self.symbol = symbol
+        self.symbol_col = symbol_col
         self.timestamp_col = timestamp_col
         self.cols = {
             "open": open_col,
@@ -33,28 +35,42 @@ class DataFrameDataSource(DataSource):
             "volume": volume_col,
         }
 
-    @staticmethod
-    def _scalar(x):
-        return x.iloc[0] if hasattr(x, "iloc") else x
-
-
     async def __aiter__(self) -> AsyncIterable[Bar]:
-        for index, row in self.df.iterrows():
+        cols = list(self.df.columns)
 
-            if self.timestamp_col is not None:
-                ts = row[self.timestamp_col]
-            else:
-                ts = index
+        # precompute indices for faster access
+        open_i: int   = cols.index(self.cols["open"])
+        high_i: int   = cols.index(self.cols["high"])
+        low_i: int    = cols.index(self.cols["low"])
+        close_i: int  = cols.index(self.cols["close"])
+        volume_i: int = cols.index(self.cols["volume"])
+
+        sym_i: int | None = None
+        ts_i: int | None = None
+
+        if self.symbol_col is not None:
+            sym_i: int = cols.index(self.symbol_col)
+
+        if self.timestamp_col is not None:
+            ts_i: int  = cols.index(self.timestamp_col)
+
+
+        for tup in self.df.itertuples(index=True, name=None):
+            index = tup[0]
+            row = tup[1:]
+
+            sym = row[sym_i] if sym_i is not None else self.symbol
+            ts = row[ts_i] if ts_i is not None else index
 
             if hasattr(ts, "to_pydatetime"):
                 ts = ts.to_pydatetime()
 
             yield Bar(
                 time_stamp=ts,
-                symbol=self.symbol,
-                open=float(self._scalar(row[self.cols["open"]])),
-                high=float(self._scalar(row[self.cols["high"]])),
-                low=float(self._scalar(row[self.cols["low"]])),
-                close=float(self._scalar(row[self.cols["close"]])),
-                volume=float(self._scalar(row[self.cols["volume"]])),
+                symbol=sym,
+                open=float(row[open_i]),
+                high=float(row[high_i]),
+                low=float(row[low_i]),
+                close=float(row[close_i]),
+                volume=float(row[volume_i]),
             )
