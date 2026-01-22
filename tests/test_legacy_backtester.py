@@ -1,13 +1,10 @@
-from tkinter.scrolledtext import example
-
 import pandas as pd
 
-from src.backtester.backtester import Backtester
-from src.example_strategy import ExampleStrategy
-from src.core.types import SignalType
+from ghosalquant.backtester.backtester_base import Backtester
+from ghosalquant.core.types import SignalType
 
-from src.compatibility.legacybacktester import LegacyBacktester
-from src.compatibility.test_strategy import example_strategy
+from ghosalquant.compatibility.legacybacktester import LegacyBacktester
+from ghosalquant.compatibility.test_strategy import example_strategy
 
 def create_test_dataframe() -> pd.DataFrame:
     """
@@ -78,7 +75,7 @@ def test_run_backtest():
     test_df: pd.DataFrame = create_test_dataframe()
 
     # instantiate Backtester object - mimic the run() function 
-    backtest_obj = LegacyBacktester(test_df, example_strategy)
+    backtest_obj = LegacyBacktester(test_df, test_df, strategy=example_strategy)
 
     # Should leavbe backtester.df with an extra buy/sell col
     # Can assume this works by the above test...

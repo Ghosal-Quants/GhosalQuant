@@ -1,6 +1,6 @@
 import pandas as pd
 
-from util.deprecation import deprecated
+from ..util.deprecation import deprecated
 
 @deprecated("example_strategy is legacy code. Please use a Strategy class instead.")
 def example_strategy(df: pd.DataFrame) -> pd.DataFrame:

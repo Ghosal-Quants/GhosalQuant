@@ -12,6 +12,7 @@ class BasicPortfolio(Portfolio):
 
     def __init__(self, init_capital: float = 10_000.0) -> None:
         self._init_capital: float = init_capital
+        self._cash: float = init_capital
 
         # Trades are uniquely identified by their id field but also by their symbol (cant close a trade of another symbol)
         # Symbol -> Trade ID -> Trade
@@ -44,6 +45,7 @@ class BasicPortfolio(Portfolio):
         )
 
     def snapshot_equity(self, time_stamp: datetime, prices: dict[str, float]) -> None:
+        positions_value: float = 0.0
         unrealised_pnl: float = 0.0
 
         for symbol, trades in self._open_trades.items():
@@ -53,11 +55,12 @@ class BasicPortfolio(Portfolio):
             if symbol not in prices:
                 raise KeyError(f"Price for symbol {symbol} not provided in prices dict.")
 
-            current_price: float = prices[symbol]
+            current_price: float = float(prices[symbol])
             for trade in trades.values():
+                positions_value += trade.size * current_price
                 unrealised_pnl += trade.unrealised_pnl(current_price)
 
-        equity = self._init_capital + self._realised_pnl + unrealised_pnl
+        equity = self._cash + positions_value
 
         self._equity_points.append(
             EquityPoint(
@@ -81,10 +84,30 @@ class BasicPortfolio(Portfolio):
     def realised_pnl(self) -> float:
         return self._realised_pnl
 
+    @property
+    def unrealised_pnl(self) -> float:
+        if not self._equity_points:
+            return 0.0
+        return float(self._equity_points[-1].unrealised_pnl)
+
+    @property
+    def final_balance(self) -> float:
+        if not self._equity_points:
+            return self._init_capital
+        return float(self._equity_points[-1].equity)
+
     # Helpers -------
     def _open(self, order: Order) -> None:
         if order.quantity is None:
             raise ValueError("Order quantity cannot be None")
+
+        cost: float = order.price * order.quantity
+
+        if cost > self._cash: # We reject rather than clip size
+            #print(f"[Portfolio]: Not enough cash to execute BUY order for {order.symbol}: cost={cost:.2f} cash={self._cash:.2f} qty={order.quantity} price={order.price}")
+            return
+
+        self._cash -= cost
 
         trade_id: int = self._next_trade_id
         self._next_trade_id += 1
@@ -133,6 +156,8 @@ class BasicPortfolio(Portfolio):
                 self._realised_pnl += trade.realised_pnl
                 self._closed_trades.append(trade)
 
+                self._cash += trade.size * close_price
+
                 close_qty -= trade.size
                 del trades[trade_id]
             else:
@@ -152,6 +177,8 @@ class BasicPortfolio(Portfolio):
 
                 self._closed_trades.append(closed_trade)
                 self._realised_pnl += closed_trade.realised_pnl
+
+                self._cash += close_qty * close_price
 
                 trade.size -= close_qty
                 close_qty = 0

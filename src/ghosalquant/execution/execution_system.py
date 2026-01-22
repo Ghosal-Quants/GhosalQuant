@@ -4,6 +4,7 @@ from ..execution.strategy_base import Strategy
 from ..execution.sinks import SignalSink, PrintSink
 from ..risk.risk_manager import RiskManager
 from ..risk.types import RiskContext
+from ..portfolio.portfolio_base import Portfolio
 
 
 # ExecutionSystem coordinates the backtesting loop:
@@ -18,16 +19,21 @@ class ExecutionSystem:
             strategy: Strategy,
             signal_destination: SignalSink | None = None,
             risk_manager: RiskManager | None = None,
+            portfolio: Portfolio | None = None
     ) -> None:
 
         self.data_src = data_src
         self.strategy = strategy
 
         # Signal pipeline
-        self.sig_sink = signal_destination or PrintSink() # Backtester / Broker - Print by default
+        self.sig_sink = signal_destination
 
-        # Risk manager
         self.risk_manager = risk_manager
+        self.portfolio = portfolio
+
+        if self.portfolio is not None and self.risk_manager is None:
+            raise ValueError("A RiskManager has to be used in combination with a Portfolio.")
+
 
     async def run(self) -> None:
         self.strategy.on_start()
@@ -42,11 +48,17 @@ class ExecutionSystem:
                     continue
 
                 # Actionable signal: send to sink
-                await self.sig_sink.on_signal(signal)
+                if self.sig_sink is not None:
+                    await self.sig_sink.on_signal(signal)
 
                 if self.risk_manager:
-                    order: Order = self.risk_manager.evaluate(signal, RiskContext())
-                    print("Order:", str(order))
-                    raise NotImplementedError("Risk manager integration is not fully implemented yet.")
+                    order: Order | None = self.risk_manager.evaluate(signal, RiskContext())
+                    if order is None:
+                        continue
+
+                    if self.portfolio is None:
+                        continue
+
+                    await self.portfolio.process_order(order)
         finally:
             self.strategy.on_end()

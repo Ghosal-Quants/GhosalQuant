@@ -9,7 +9,7 @@ def lerp(a: float, b: float, t: float) -> float:
     return a + (b - a) * t
 
 class ConfidenceSizer(RiskRule):
-    def __init__(self, min_quantity: float = 0.0, max_quantity: float = 10.0) -> None:
+    def __init__(self, min_quantity: float = 0.0, max_quantity: float = 1.0) -> None:
         self.min_quantity = float(min_quantity)
         self.max_quantity = float(max_quantity)
 

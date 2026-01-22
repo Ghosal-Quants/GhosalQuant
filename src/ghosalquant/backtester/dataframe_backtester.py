@@ -1,15 +1,16 @@
 import asyncio
-from datetime import datetime
+from typing import Iterable
+
 from pandas import DataFrame
 import pandas as pd
 
-from ..backtester.backtester import Backtester
-from ..core.types import Order
+from ..backtester.backtester_base import Backtester
+from ..core.types import Order, EquityPoint, BacktestKPMs
 from ..execution.strategy_base import Strategy
 from ..data_layer.dataframe_datasource import DataFrameDataSource
 from ..execution.sinks import DataFrameSink
 from ..portfolio.basic_portfolio import BasicPortfolio
-from ..util.backtester_utils import calculate_stats, output_to_excel
+from ..util.backtester_utils import output_to_excel
 from ..util.config import load_config
 
 class DataFrameBacktester(Backtester):
@@ -83,21 +84,61 @@ class DataFrameBacktester(Backtester):
                 signal_col= signal_col,
                 confidence_col= confidence_col,
                 quantity_col= quantity_col
-            )
+            ),
+            portfolio= self._portfolio
         )
 
     async def handle_order(self, order: Order) -> None:
-        await self._portfolio.process_order(order)
+        raise NotImplementedError("DataFrameBacktester does not support handle_order yet, Order sinks are to be implemented.")
 
-    def get_return_dataframe(self) -> DataFrame:
-        return self._return_df
-
-    def run(self) -> DataFrame:
+    def run(self) -> BacktestKPMs:
         # ExecutionSystem.run() is an async routine so it must be run with asyncio.run() to start the event loop
         asyncio.run(self.execution_system.run())
 
-        #if self.df_results is not None:
-        #    calculate_stats(df_results=self.df_results)
-        #    output_to_excel(df_results=self.df_results)
+        #kpms: BacktestKPMs = calculate_stats(df_results=self._return_df)
+        #output_to_excel(df_results=self._return_df)
 
+        return self.kpms
+
+    @property
+    def dataframe(self) -> DataFrame:
         return self._return_df
+
+    @property
+    def equity_curve(self) -> Iterable[EquityPoint]:
+        return self._portfolio.equity_curve
+
+    @property
+    def realised_pnl(self) -> float:
+        return self._portfolio.realised_pnl
+
+    from ..core.types import BacktestKPMs
+
+    @property
+    def kpms(self) -> BacktestKPMs:
+        trades = list(self._portfolio.closed_trades)
+
+        total_trades = len(trades)
+
+        wins = 0
+        losses = 0
+        for t in trades:
+            if (t.realised_pnl or 0.0) > 0.0: # Default to 0.0 if None
+                wins += 1
+            elif (t.realised_pnl or 0.0) < 0.0:
+                losses += 1
+
+        if total_trades > 0:
+            win_rate = (wins / total_trades) * 100.0
+        else:
+            win_rate = 0.0
+
+        total_pnl = float(self._portfolio.realised_pnl)
+
+        return BacktestKPMs(
+            total_trades=total_trades,
+            total_wins=wins,
+            total_losses=losses,
+            win_rate_pct=win_rate,
+            total_pnl=total_pnl,
+        )

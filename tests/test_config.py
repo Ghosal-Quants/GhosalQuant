@@ -1,4 +1,4 @@
-from src.util.config import load_config, Config, SystemConfig, TimeConfig
+from ghosalquant.util.config import load_config, Config, SystemConfig, TimeConfig
 
 def test_load_config():
     config: Config = load_config("test_config.yaml")

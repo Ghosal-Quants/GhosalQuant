@@ -1,4 +1,4 @@
-from util.deprecation import deprecated
+from ..util.deprecation import deprecated
 
 BUY = 1
 SELL = -1

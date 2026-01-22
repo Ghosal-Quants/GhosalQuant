@@ -3,7 +3,7 @@
 # ------------------------------------------------
 SYSTEM:
   # The location of the historical data files
-  symbols: ["AAPL", "MSFT"]
+  symbols: ["AAPL"]
   # The timeframe for the main data (e.g., 1H, 30Min, 1D)
   main_timeframe: "1H"
   # The timeframe for signal evaluation (e.g., 5Min) (if using Parquet, must be >= base_resolution)

@@ -3,10 +3,10 @@ import pandas as pd
 from pathlib import Path
 from datetime import datetime
 
-from compatibility.trade import Trade
+from .trade import Trade
 
-from util.backtester_utils import calculate_stats, output_to_excel
-from util.deprecation import deprecated
+from ..util.backtester_utils import calculate_stats, output_to_excel
+from ..util.deprecation import deprecated
 
 # ===============================================================================================
 # NOTICE: LEGACY BACKTESTER

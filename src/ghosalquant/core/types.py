@@ -114,10 +114,10 @@ class BacktestKPMs:
 
     def __str__(self) -> str:
         return (
-            f"Total Trades: {self.total_trades}, "
-            +f"Total Wins: {self.total_wins}, "
-            +f"Total Losses: {self.total_losses}, "
-            +f"Win Rate (%): {self.win_rate_pct:.2f}, "
+            f"Total Trades: {self.total_trades},\n"
+            +f"Total Wins: {self.total_wins},\n"
+            +f"Total Losses: {self.total_losses},\n"
+            +f"Win Rate (%): {self.win_rate_pct:.2f},\n"
             +f"Total pnl: {self.total_pnl:.2f}"
         )
 

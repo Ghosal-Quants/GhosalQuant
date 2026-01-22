@@ -6,6 +6,7 @@ from ..execution.execution_system import ExecutionSystem
 from ..data_layer.datasource_base import DataSource
 from ..execution.sinks import SignalSink
 from ..core.types import Order
+from ..portfolio.portfolio_base import Portfolio
 from ..risk.builder import build_risk_manager
 from ..risk.risk_manager import RiskManager
 from ..util.config import Config, load_config
@@ -17,7 +18,8 @@ class Backtester(ABC):
             data_src: DataSource,
             config_path: str | None = None,
             config: Config | None = None,
-            signal_destination: SignalSink | None = None
+            signal_destination: SignalSink | None = None,
+            portfolio: Portfolio | None = None
     ) -> None:
         self.strategy = strategy
         self.data_src = data_src
@@ -33,7 +35,8 @@ class Backtester(ABC):
             data_src = self.data_src,
             strategy = self.strategy,
             signal_destination = signal_destination,
-            risk_manager=build_risk_manager(self.config.risk)
+            risk_manager=build_risk_manager(self.config.risk),
+            portfolio=portfolio
         )
 
     @abstractmethod

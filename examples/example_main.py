@@ -3,7 +3,7 @@ import pandas as pd
 
 from example_strategy import ExampleStrategy
 from ghosalquant.backtester.dataframe_backtester import DataFrameBacktester
-
+from ghosalquant.util.visualisation import plot_equity_curve
 
 if __name__ == "__main__":
     print("Example Implementation With DataFrameBacktester: ")
@@ -21,7 +21,12 @@ if __name__ == "__main__":
     )
 
     # Run backtester
-    df2: pd.DataFrame = backtester.run()
-    print(df2)
+    kpms = backtester.run()
+    df2: pd.DataFrame = backtester.dataframe
+
+    print("KEY PERFORMANCE METRICS:\n" + str(kpms) + "\n")
+
+    print("REALISED PNL: ", backtester.realised_pnl)
+    plot_equity_curve(backtester.equity_curve, show_realised_unrealised=True)
 
 
