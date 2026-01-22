@@ -22,7 +22,7 @@ class SignalType(str, Enum):
 class Signal:
     time_stamp: datetime
     symbol: str
-    signal_type: SignalType
+    signal_type: SignalType | None 
     price: float
     confidence: float = 1.0
     quantity: float | None = None

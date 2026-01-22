@@ -19,7 +19,7 @@ class BasicPortfolio(Portfolio):
         self._open_trades: dict[str, dict[int, Trade]] = {}
         self._closed_trades: list[Trade] = []
 
-        self._next_trade_id: int = 0  # start indexing trades from 0
+        self._next_trade_id: int = 0 # start indexing trades from 0
         self._realised_pnl: float = 0.0
         self._equity_points: list[EquityPoint] = []
 
