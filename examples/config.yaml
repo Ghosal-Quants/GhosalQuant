@@ -3,17 +3,20 @@
 # ------------------------------------------------
 SYSTEM:
   # The location of the historical data files
-  target: "AAPL"
-  # The timeframe for the main data (e.g., H1, M30, D1)
-  main_timeframe: "H1"
-  # The timeframe for execution/signal checks (e.g., M5)
-  execution_timeframe: "M5"
+  symbols: ["AAPL"]
+  # The timeframe for the main data (e.g., 1H, 30Min, 1D)
+  main_timeframe: "1H"
+  # The timeframe for signal evaluation (e.g., 5Min) (if using Parquet, must be >= base_resolution)
+  execution_timeframe: "5Min"
   # Use multiprocessing for faster testing
   # use_multiprocessing: True
   # Number of CPU cores to dedicate to the process
   # num_processes: 4
   # do we want fresh candles downloaded?
   fresh_candles: True
+
+  # Use the built-in risk manager
+  use_risk_manager: True
 
 # ------------------------------------------------
 # Test Period and Range
@@ -24,3 +27,21 @@ TIME_RANGE:
   # Time window for daily trading (e.g., 9:00 to 17:00 UTC)
   session_start_time: "09:00"
   session_end_time: "17:00"
+
+# ------------------------------------------------
+# Risk Manager (Only applicable if SYSTEM.use_risk_manager is True)
+# ------------------------------------------------
+RISK:
+  rules:
+    - name: "MaxOpenPositions"
+      max_open_positions: 3
+    - name: "ConfidenceSizer"
+      min_quantity: 0.0
+      max_quantity: 10.0
+
+# ------------------------------------------------
+# Parquet Store (Applicable if using ParquetPolygonDataSource)
+# ------------------------------------------------
+PARQUET_STORE:
+  path: "src/ghosalquant/data_layer/data/main.parquet"
+  base_resolution: "1Min"

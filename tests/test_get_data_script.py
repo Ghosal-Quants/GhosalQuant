@@ -3,7 +3,7 @@ import json
 from typing import Dict, Any
 import sys
 
-from src.compatibility.get_data_script import get_data_df
+from ghosalquant.compatibility.get_data_script import get_data_df
 
 def test_get_data_df():
 

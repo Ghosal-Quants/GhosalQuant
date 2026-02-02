@@ -1,0 +1,186 @@
+from datetime import datetime
+from typing import Iterable
+
+from ..core.types import Trade, EquityPoint, Order, SignalType
+from ..portfolio.portfolio_base import Portfolio
+
+
+class BasicPortfolio(Portfolio):
+    """
+    A basic portfolio implementation which handles opening and closing trades. Note that it assumes liquid markets.
+    """
+
+    def __init__(self, init_capital: float = 10_000.0) -> None:
+        self._init_capital: float = init_capital
+        self._cash: float = init_capital
+
+        # Trades are uniquely identified by their id field but also by their symbol (cant close a trade of another symbol)
+        # Symbol -> Trade ID -> Trade
+        self._open_trades: dict[str, dict[int, Trade]] = {}
+        self._closed_trades: list[Trade] = []
+
+        self._next_trade_id: int = 0 # start indexing trades from 0
+        self._realised_pnl: float = 0.0
+        self._equity_points: list[EquityPoint] = []
+
+    async def process_order(self, order: Order) -> None:
+        order_type: SignalType = order.side
+
+        if order_type is None:
+            return
+
+        if order.quantity is None:
+            raise ValueError("Order quantity cannot be None")
+
+        if order_type == SignalType.BUY:
+            self._open(order)
+        elif order_type == SignalType.SELL:
+            self._close(order)
+        else:
+            raise ValueError(f"Unsupported order type: {order_type}")
+
+        self.snapshot_equity(
+            time_stamp= order.time_stamp,
+            prices={order.symbol: order.price}
+        )
+
+    def snapshot_equity(self, time_stamp: datetime, prices: dict[str, float]) -> None:
+        positions_value: float = 0.0
+        unrealised_pnl: float = 0.0
+
+        for symbol, trades in self._open_trades.items():
+            if not trades:
+                continue
+
+            if symbol not in prices:
+                raise KeyError(f"Price for symbol {symbol} not provided in prices dict.")
+
+            current_price: float = float(prices[symbol])
+            for trade in trades.values():
+                positions_value += trade.size * current_price
+                unrealised_pnl += trade.unrealised_pnl(current_price)
+
+        equity = self._cash + positions_value
+
+        self._equity_points.append(
+            EquityPoint(
+                time_stamp=time_stamp,
+                equity=equity,
+                realised_pnl=self._realised_pnl,
+                unrealised_pnl=unrealised_pnl,
+                num_open_trades=sum(len(t) for t in self._open_trades.values()),
+            )
+        )
+
+    @property
+    def closed_trades(self) -> Iterable[Trade]:
+        return self._closed_trades
+
+    @property
+    def equity_curve(self) -> Iterable[EquityPoint]:
+        return self._equity_points
+
+    @property
+    def realised_pnl(self) -> float:
+        return self._realised_pnl
+
+    @property
+    def unrealised_pnl(self) -> float:
+        if not self._equity_points:
+            return 0.0
+        return float(self._equity_points[-1].unrealised_pnl)
+
+    @property
+    def final_balance(self) -> float:
+        if not self._equity_points:
+            return self._init_capital
+        return float(self._equity_points[-1].equity)
+
+    # Helpers -------
+    def _open(self, order: Order) -> None:
+        if order.quantity is None:
+            raise ValueError("Order quantity cannot be None")
+
+        cost: float = order.price * order.quantity
+
+        if cost > self._cash: # We reject rather than clip size
+            #print(f"[Portfolio]: Not enough cash to execute BUY order for {order.symbol}: cost={cost:.2f} cash={self._cash:.2f} qty={order.quantity} price={order.price}")
+            return
+
+        self._cash -= cost
+
+        trade_id: int = self._next_trade_id
+        self._next_trade_id += 1
+
+        trade = Trade(
+            id=trade_id,
+            symbol=order.symbol,
+            signal_type=SignalType.BUY,
+            entry_price=order.price,
+            size=order.quantity,
+            open_time=order.time_stamp
+        )
+        if order.symbol not in self._open_trades:
+            self._open_trades[order.symbol] = {}
+
+        self._open_trades[order.symbol][trade_id] = trade
+
+    def _close(self, order: Order) -> None:
+        if order.quantity is None:
+            raise ValueError("Order quantity cannot be None")
+
+        symbol: str = order.symbol
+        trades: dict = self._open_trades.get(symbol)
+        if not trades:
+            # Ideally this should raise an error, but strategies might not be that smart
+            # raise RuntimeError(f"SELL order received for {symbol}, but no open trades exist.")
+            return
+
+        close_qty: float = order.quantity
+        close_price: float = order.price
+        time: datetime = order.time_stamp
+
+        trade_ids_in_order = sorted(trades.keys(), reverse=True)  # LIFO
+
+        for trade_id in trade_ids_in_order:  # Close multiple trades if needed, in order to satisfy quantity
+            if close_qty <= 0:
+                break
+
+            trade = trades[trade_id]
+
+            if trade.size <= close_qty:
+                # Close entire trade
+                trade.close_time = time
+                trade.realised_pnl = trade.unrealised_pnl(close_price)
+
+                self._realised_pnl += trade.realised_pnl
+                self._closed_trades.append(trade)
+
+                self._cash += trade.size * close_price
+
+                close_qty -= trade.size
+                del trades[trade_id]
+            else:
+                # Partially close trade, and make a new closed trade record
+                new_trade_id: int = self._next_trade_id
+                self._next_trade_id += 1
+                closed_trade = Trade(
+                    id=new_trade_id,
+                    symbol=trade.symbol,
+                    signal_type=SignalType.SELL,
+                    entry_price=trade.entry_price,
+                    size=close_qty,
+                    open_time=trade.open_time,
+                    close_time=time,
+                )
+                closed_trade.realised_pnl = (close_price - trade.entry_price) * close_qty
+
+                self._closed_trades.append(closed_trade)
+                self._realised_pnl += closed_trade.realised_pnl
+
+                self._cash += close_qty * close_price
+
+                trade.size -= close_qty
+                close_qty = 0
+
+        # close_qty should be 0 here, we could raise an error if not

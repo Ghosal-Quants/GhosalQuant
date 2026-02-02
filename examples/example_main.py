@@ -1,31 +1,32 @@
-from datetime import datetime
 import yfinance as yf
 import pandas as pd
 
 from example_strategy import ExampleStrategy
-from data_layer.dataframe_datasource import DataFrameDataSource
-from backtester.dataframe_backtester import DataFrameBacktester
-from backtester.riskmanager_backtester import RiskManagerBacktester
-
+from ghosalquant.backtester.dataframe_backtester import DataFrameBacktester
+from ghosalquant.util.visualisation import plot_equity_curve
 
 if __name__ == "__main__":
-    print("Example Implementation With RiskManagerBacktester: ")
+    print("Example Implementation With DataFrameBacktester: ")
 
-    # strategy receives market data and produces buy/sell signal
+    # strategy receives bars and produces directional intent signals (BUY / SELL)
     strategy = ExampleStrategy()
 
     # Download OHLCV data
-    df: pd.DataFrame = yf.download("AAPL", start="2020-01-01", end="2020-01-31", auto_adjust=True, progress=False)
+    df: pd.DataFrame = yf.download("AAPL", start="2024-01-01", end="2025-12-31", auto_adjust=True, progress=False)
 
-    # Initialise backtester with RiskManager
-    backtester = RiskManagerBacktester(
+    backtester = DataFrameBacktester(
         strategy=strategy,
         dataframe=df,
-        symbol="AAPL",
+        config_path="config.yaml"
     )
 
-    # Run backtester
-    df2: pd.DataFrame = backtester.run()
-    print(df2)
+    # Run backtester and get key performance metrics
+    kpms = backtester.run()
+    df2: pd.DataFrame = backtester.dataframe
+
+    print("KEY PERFORMANCE METRICS:\n" + str(kpms) + "\n")
+
+    print("REALISED PNL: ", backtester.realised_pnl)
+    plot_equity_curve(backtester.equity_curve, show_realised_unrealised=True)
 
 

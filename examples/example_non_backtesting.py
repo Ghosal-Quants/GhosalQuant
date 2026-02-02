@@ -1,13 +1,15 @@
-from execution.execution_system import ExecutionSystem
+from ghosalquant.execution.execution_system import ExecutionSystem
 from example_strategy import ExampleStrategy
-from data_layer.yfinance_datasource import YFinanceDataSource
-from execution.sinks import PrintSink
+from ghosalquant.data_layer.yfinance_datasource import YFinanceDataSource
 import asyncio
-from datetime import datetime
+
+from ghosalquant.portfolio.basic_portfolio import BasicPortfolio
+from ghosalquant.risk.risk_manager import RiskManager
+from ghosalquant.util.visualisation import plot_equity_curve
 
 if __name__ == "__main__":
     print("Example Implementation With Just Print: ")
-    
+
     # strategy receives market data and produces buy/sell signal
     strategy = ExampleStrategy()
     
@@ -18,13 +20,24 @@ if __name__ == "__main__":
         symbol="^GSPC",
         start_day=1,
         start_month=1,
-        start_year=2020,
-        end_day=28,
-        end_month=1,
-        end_year=2020
+        start_year=2025,
+        end_day=31,
+        end_month=12,
+        end_year=2025
     )
 
-    # Note: signal_destination is already PrintSink by default
-    execution_system = ExecutionSystem(strategy=strategy, data_src=data, signal_destination=PrintSink())
+    portfolio = BasicPortfolio()
+
+    execution_system = ExecutionSystem(
+        strategy=strategy,
+        data_src=data,
+        risk_manager=RiskManager(),
+        portfolio=portfolio,
+    )
 
     asyncio.run(execution_system.run())
+
+    print("Final Portfolio State: ")
+    print(portfolio)
+
+    plot_equity_curve(portfolio.equity_curve, show_realised_unrealised=True)

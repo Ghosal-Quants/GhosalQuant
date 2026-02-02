@@ -1,11 +1,11 @@
 import asyncio
 from datetime import datetime
 
-from data_layer.list_datasource import ListDataSource
-from execution.execution_system import ExecutionSystem
-from example_strategy import ExampleStrategy
-from core.types import SignalType, Signal, Bar
-from execution.sinks import ListSink
+from ghosalquant.data_layer.list_datasource import ListDataSource
+from ghosalquant.execution.execution_system import ExecutionSystem
+from examples.example_strategy import ExampleStrategy
+from ghosalquant.core.types import SignalType, Signal, Bar
+from ghosalquant.execution.sinks import ListSink
 
 
 # Helper function
@@ -15,7 +15,8 @@ def _bar(timestamp: str, **kwargs) -> Bar:
 
 def test_chain_sinks():
     bars: list[Bar] = [
-        _bar("2025-11-15 09:00:00", symbol="TEST", open=100.0, high=101.1, low=100.0, close=100.8, volume=1000)
+        _bar("2025-11-15 09:00:00", symbol="TEST", open=100.0, high=101.1, low=100.0, close=100.8, volume=1000),
+        _bar("2025-11-15 09:01:00", symbol="TEST", open=100.8, high=101.1, low=100.0, close=99.1, volume=1000)
     ]
 
     list_sink: ListSink = ListSink()
@@ -24,14 +25,13 @@ def test_chain_sinks():
         data_src=ListDataSource(bars=bars),
         strategy=ExampleStrategy(),
         signal_destination=ListSink(next_sink=ListSink(next_sink=ListSink(next_sink=list_sink))),
-        ignore_noop_signals=False
     )
 
     # Apply strategy
     asyncio.run(execution.run())
 
     assert len(list_sink.get_signals()) == 1
-    assert list_sink.get_signals()[0].signal_type == SignalType.NOOP
+    assert list_sink.get_signals()[0].signal_type is SignalType.BUY
 
 
 def test_execute_strategy():
@@ -55,7 +55,6 @@ def test_execute_strategy():
         data_src=ListDataSource(bars=bars),
         strategy=ExampleStrategy(),
         signal_destination=list_sink,
-        ignore_noop_signals=False
     )
 
     # Assert the buy and sells exist in the updated df
@@ -73,7 +72,6 @@ def test_execute_strategy():
     asyncio.run(execution.run())
 
     expected_signal_types = [
-        SignalType.NOOP.value,
         SignalType.SELL.value,
         SignalType.BUY.value,
         SignalType.SELL.value,
