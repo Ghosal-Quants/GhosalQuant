@@ -1,5 +1,6 @@
 import yfinance as yf
 import pandas as pd
+from matplotlib import pyplot as plt
 
 from example_strategy import ExampleStrategy
 from ghosalquant.backtester.dataframe_backtester import DataFrameBacktester
@@ -28,5 +29,4 @@ if __name__ == "__main__":
 
     print("REALISED PNL: ", backtester.realised_pnl)
     plot_equity_curve(backtester.equity_curve, show_realised_unrealised=True)
-
-
+    plt.show()
