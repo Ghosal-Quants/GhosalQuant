@@ -1,11 +1,10 @@
 from abc import ABC, abstractmethod
-import asyncio
 
 from ..execution.strategy_base import Strategy
 from ..execution.execution_system import ExecutionSystem
 from ..data_layer.datasource_base import DataSource
 from ..execution.sinks import SignalSink
-from ..core.types import Order
+from ..core.types import Order, BacktestKPMs
 from ..portfolio.portfolio_base import Portfolio
 from ..risk.builder import build_risk_manager
 from ..risk.risk_manager import RiskManager
@@ -45,7 +44,7 @@ class Backtester(ABC):
         ...
 
     @abstractmethod
-    def run(self):
+    def run(self) -> BacktestKPMs:
         """"
         Run the backtesting process.
 

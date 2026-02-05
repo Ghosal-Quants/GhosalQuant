@@ -40,6 +40,8 @@ class ExecutionSystem:
 
         try:
             async for bar in self.data_src:
+                self.portfolio.update_equity(bar)
+
                 # Event handling
                 signal: Signal | None = self.strategy.on_market_data(bar)
 
@@ -53,6 +55,7 @@ class ExecutionSystem:
 
                 if self.risk_manager:
                     order: Order | None = self.risk_manager.evaluate(signal, RiskContext())
+
                     if order is None:
                         continue
 

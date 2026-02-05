@@ -23,7 +23,6 @@ class Strategy(ABC):
     @abstractmethod
     def on_end(self) -> None: ...
 
-
     def calculate_quantity(self, confidence) -> float | None:
         if confidence >= self.confidence_threshold:
             return self.max_qty

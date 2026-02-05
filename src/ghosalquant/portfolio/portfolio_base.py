@@ -1,11 +1,14 @@
 from datetime import datetime
 from typing import Protocol, Iterable
 
-from ..core.types import Trade, EquityPoint, Order
+from ..core.types import Trade, EquityPoint, Order, Bar
 
 
 class Portfolio(Protocol):
     async def process_order(self, order: Order) -> None:
+        ...
+
+    def update_equity(self, bar: Bar):
         ...
 
     def snapshot_equity(self, time_stamp: datetime, prices: dict[str, float]) -> None:
