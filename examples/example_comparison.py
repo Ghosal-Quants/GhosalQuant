@@ -8,15 +8,6 @@ from ghosalquant.backtester.dataframe_backtester import DataFrameBacktester
 from ghosalquant.util.visualisation import plot_equity_curve
 
 
-def run_backtest(strategy, df: pd.DataFrame, config_path: str):
-    backtester = DataFrameBacktester(
-        strategy=strategy,
-        dataframe=df,
-        config_path=config_path
-    )
-    kpms = backtester.run()
-    return backtester, kpms
-
 if __name__ == "__main__":
     df: pd.DataFrame = yf.download(
         "AAPL",
@@ -30,16 +21,23 @@ if __name__ == "__main__":
     benchmark_strategy = BenchmarkBnHStrategy()
 
     # Run both backtests
-    example_bt, example_kpms = run_backtest(example_strategy, df, config_path="config.yaml")
-    bench_bt, bench_kpms = run_backtest(benchmark_strategy, df, config_path="config.yaml")
+    example_bt = DataFrameBacktester(
+        strategy=example_strategy,
+        dataframe=df,
+        config_path="config.yaml"
+    )
+    example_kpms = example_bt.run()
+
+    bench_bt = DataFrameBacktester(
+        strategy=benchmark_strategy,
+        dataframe=df,
+        config_path="config.yaml"
+    )
+    bench_kpms = bench_bt.run()
 
     print("\n=== KPMs ===")
     print("\n[ExampleStrategy]\n", example_kpms)
     print("\n[BenchmarkBuyAndHoldStrategy]\n", bench_kpms)
-
-    print("\n=== Realised PnL ===")
-    print("ExampleStrategy:", example_bt.realised_pnl)
-    print("BenchmarkBuyAndHoldStrategy:", bench_bt.realised_pnl)
 
     fig, ax = plt.subplots()
     plot_equity_curve(

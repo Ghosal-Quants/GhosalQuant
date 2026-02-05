@@ -112,6 +112,14 @@ class DataFrameBacktester(Backtester):
     def realised_pnl(self) -> float:
         return self._portfolio.realised_pnl
 
+    @property
+    def unrealised_pnl(self) -> float:
+        return self._portfolio.unrealised_pnl
+
+    @property
+    def total_pnl(self) -> float:
+        return self.realised_pnl + self.unrealised_pnl
+
     from ..core.types import BacktestKPMs
 
     @property
@@ -133,12 +141,12 @@ class DataFrameBacktester(Backtester):
         else:
             win_rate = 0.0
 
-        total_pnl = float(self._portfolio.realised_pnl)
-
         return BacktestKPMs(
             total_trades=total_trades,
             total_wins=wins,
             total_losses=losses,
             win_rate_pct=win_rate,
-            total_pnl=total_pnl,
+            realised_pnl=self.realised_pnl,
+            unrealised_pnl=self.unrealised_pnl,
+            total_pnl=self.total_pnl
         )

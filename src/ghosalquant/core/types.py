@@ -107,6 +107,8 @@ class BacktestKPMs:
     total_wins: int
     total_losses: int
     win_rate_pct: float
+    realised_pnl: float
+    unrealised_pnl: float
     total_pnl: float
 
     def as_dict(self) -> dict[str, float | int]:
@@ -118,6 +120,8 @@ class BacktestKPMs:
             +f"Total Wins: {self.total_wins},\n"
             +f"Total Losses: {self.total_losses},\n"
             +f"Win Rate (%): {self.win_rate_pct:.2f},\n"
+            +f"Realised pnl: {self.realised_pnl:.2f},\n"
+            +f"Unrealised pnl: {self.unrealised_pnl:.2f},\n"
             +f"Total pnl: {self.total_pnl:.2f}"
         )
 

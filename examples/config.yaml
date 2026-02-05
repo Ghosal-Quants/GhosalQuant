@@ -22,8 +22,8 @@ SYSTEM:
 # Test Period and Range
 # ------------------------------------------------
 TIME_RANGE:
-  start_date: "2023-01-01"
-  end_date: "2024-06-30"
+  start_date: "2024-01-01"
+  end_date: "2025-12-31"
   # Time window for daily trading (e.g., 9:00 to 17:00 UTC)
   session_start_time: "09:00"
   session_end_time: "17:00"
