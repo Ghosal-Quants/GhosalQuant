@@ -141,10 +141,11 @@ Signals are what are directly emitted by the `Strategy` and are passed by the `E
 class SignalType(str, Enum):
     BUY = 'BUY'
     SELL = 'SELL'
-    NOOP = 'NOOP'
 
 Signal(time_stamp: datetime, symbol: str, signal_type: SignalType, price: float, confidence: float = 1.0, quantity: float | None = None, metadata: dict[str, Any] | None = None)
 ```
+> **Note**: If a strategy does not wish to emit a signal for a given bar, it must instead return `None` rather than a signal.
+
 The metadata field is optionally used for additional information about a signal, such as stop loss or take profit levels
 if applicable.
 
@@ -163,7 +164,15 @@ which calculates the unrealised profit or loss of a trade based on a given mark 
 
 ### 2.4 BacktestKPMs (Backtester Key Performance Metrics) and EquityPoint
 ```python
-BacktestKPMs(total_trades: int, total_wins: int, total_losses: int, win_rate_pct: float, total_pnl: float)
+BacktestKPMs(
+    total_trades: int,
+    total_wins: int,
+    total_losses: int,
+    win_rate_pct: float,
+    realised_pnl: float,
+    unrealised_pnl: float,
+    total_pnl: float
+)
 
 EquityPoint(time_stamp: datetime, equity: float, realised_pnl: float, unrealised_pnl: float, num_open_trades: int)
 ```

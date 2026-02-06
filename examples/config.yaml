@@ -19,6 +19,19 @@ SYSTEM:
   use_risk_manager: True
 
 # ------------------------------------------------
+# Data Source Configuration
+# ------------------------------------------------
+DATA:
+  source: "polygon" # Options: "polygon", "yfinance"
+  # Only the section specified in the "source" field will be used. The other section will be ignored.
+  polygon:
+    api_key: "API_KEY"
+    parquet_path: "src/ghosalquant/data_layer/data/main.parquet"
+    base_resolution: "1Min"
+  yfinance: {}
+    # Currently no config options for yfinance, but this section may be expanded in future
+
+# ------------------------------------------------
 # Test Period and Range
 # ------------------------------------------------
 TIME_RANGE:
@@ -38,10 +51,3 @@ RISK:
     - name: "ConfidenceSizer"
       min_quantity: 0.0
       max_quantity: 10.0
-
-# ------------------------------------------------
-# Parquet Store (Applicable if using ParquetPolygonDataSource)
-# ------------------------------------------------
-PARQUET_STORE:
-  path: "src/ghosalquant/data_layer/data/main.parquet"
-  base_resolution: "1Min"
