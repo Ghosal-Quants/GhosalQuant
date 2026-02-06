@@ -28,8 +28,7 @@ DATA:
     api_key: "API_KEY"
     parquet_path: "src/ghosalquant/data_layer/data/main.parquet"
     base_resolution: "1Min"
-  yfinance: {}
-    # Currently no config options for yfinance, but this section may be expanded in future
+  yfinance: {} # Currently no config options for yfinance, but this section may be expanded in future
 
 # ------------------------------------------------
 # Test Period and Range

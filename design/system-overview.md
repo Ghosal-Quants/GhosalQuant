@@ -32,7 +32,7 @@
 - [ ] Test
   - [x] Strategy as a separate .py file with some logic (let's say simple moving average, buy at -2% & sell at +2%
   - [ ] Pass each bar to a simple moving average that calculates last value
-  - [ ] Pass each bar to trading logic, which decides whether to buy or sell
+  - [x] Pass each bar to trading logic, which decides whether to buy or sell
   - [ ] Issue an order (market order to start with, move onto limit later)
 - [ ] Execute
   - [ ] Add a broker to match orders
@@ -40,7 +40,7 @@
 
 ### Data Sources
 - [x] yfinance
-- [ ] Polygon
+- [x] Polygon
 
 ### Component Diagram
 <p align="center">
@@ -242,3 +242,20 @@ def equity_curve(self) -> Iterable[EquityPoint]: ...
 def realised_pnl(self) -> float: ...
 ```
 
+## 8 Configuration
+The backtesting system can be configured with a `Config` dataclass, which is created from a `config.yaml` file. The file
+defines what symbols to backtest, the time period, the data source, and the risk rules to apply.
+
+This config YAML is parsed at startup by `ghosalquant.util.config.load_config` and produces a strongly-typed `Config`
+dataclass instance which can be passed to a backtester.
+
+### 8.1 Config Structure
+Currently, the YAML is split into four main sections:
+- `SYSTEM`: Defines execution parameters which affect the engine, but not anything related to strategy logic.
+  - This information is loaded into a `SystemConfig` dataclass.
+- `DATA`: Defines which data source is used and allows configuration for that type of source.
+  - This information is loaded into a `DataConfig` dataclass.
+- `TIME_RANGE`: Defines the bounds of a backtesting run.
+  - This information is loaded into a `TimeConfig` dataclass.
+- `RISK`: Defines a list of risk rules which are applied if and only if `SYSTEM.use_risk_manager` is `True`.
+  - This information is loaded into a list of `RiskRuleConfig` dataclass instances, which compose a `RiskConfig` dataclass.
