@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Protocol, Iterable
+from typing import Protocol, Iterable, final
 
 from ..core.types import Trade, EquityPoint, Order, Bar
 
@@ -22,6 +22,7 @@ class Portfolio(Protocol):
             "Portfolio State:\n"
             f"\tRealised PnL: {self.realised_pnl}\n"
             f"\tUnrealised PnL: {self.unrealised_pnl}\n"
+            f"\tTotal PnL: {self.total_pnl}\n"
             f"\tClosed Trades: {len(closed)}\n"
             f"\tEquity Points: {len(curve)}\n"
             f"\tFinal Balance: {self.final_balance}\n"
@@ -42,6 +43,10 @@ class Portfolio(Protocol):
     @property
     def unrealised_pnl(self) -> float:
         ...
+
+    @property
+    def total_pnl(self) -> float:
+        return self.realised_pnl + self.unrealised_pnl
 
     @property
     def final_balance(self) -> float:

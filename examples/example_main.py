@@ -25,7 +25,7 @@ if __name__ == "__main__":
     kpms = backtester.run()
     df2: pd.DataFrame = backtester.dataframe
 
-    print("KEY PERFORMANCE METRICS:\n" + str(kpms) + "\n")
+    print(f"KEY PERFORMANCE METRICS:\n{kpms}\n")
 
     print("REALISED PNL: ", backtester.realised_pnl)
     plot_equity_curve(backtester.equity_curve, show_realised_unrealised=True)

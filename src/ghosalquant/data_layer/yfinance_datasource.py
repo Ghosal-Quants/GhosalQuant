@@ -45,10 +45,6 @@ class YFinanceDataSource(DataSource):
             self.end = datetime.now()
 
     async def __aiter__(self) -> AsyncIterable[Bar]:
-        print(
-            f"Fetching {self.symbol} data from {self.start:%Y-%m-%d} to {self.end:%Y-%m-%d}..."
-        )
-
         data: pd.DataFrame = yf.download(self.symbol, start=self.start, end=self.end, progress=False, auto_adjust=True)
         
         for ts, row in data.iterrows():

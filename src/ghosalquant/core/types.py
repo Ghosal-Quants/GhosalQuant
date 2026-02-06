@@ -125,6 +125,9 @@ class BacktestKPMs:
             +f"Total pnl: {self.total_pnl:.2f}"
         )
 
+    def __repr__(self) -> str:
+        return str(self)
+
 
 @dataclass(frozen=True, slots=True)
 class EquityPoint:
