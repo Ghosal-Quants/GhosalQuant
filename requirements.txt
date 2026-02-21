@@ -16,3 +16,5 @@ yfinance
 PyYAML
 dotenv
 customtkinter
+pyarrow
+fastparquet

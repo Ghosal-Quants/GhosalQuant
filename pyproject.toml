@@ -14,7 +14,9 @@ dependencies = [
     "requests",
     "yfinance",
     "PyYAML",
-    "dotenv"
+    "dotenv",
+    "pyarrow",
+    "fastparquet"
 ]
 
 [project.optional-dependencies]

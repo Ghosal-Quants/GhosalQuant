@@ -6,7 +6,7 @@ import pandas as pd
 from pandas import DataFrame
 
 from ..core.types import Bar
-from ..util.config import Config, ConfigError, ALLOWED_TFS
+from ..util.config import Config, ConfigError, ALLOWED_TFS, DataSrcType
 from ..data_layer.datasource_base import DataSource
 from .dataframe_datasource import DataFrameDataSource
 
@@ -16,7 +16,10 @@ from .staticUpdater import update_main_from_following
 # I avoid GPT at all costs usually, but pandas is so cancerous, so my apologies
 class ParquetPolygonDataSource(DataSource):
     def __init__(self, config: Config) -> None:
-        if config.parquet_store is None:
+        if config.data.source is not DataSrcType.POLYGON:
+            raise ConfigError("Configuration file incorrectly set up for Polygon data.")
+
+        if config.data.polygon.parquet_path is None:
             raise ConfigError("Parquet config is required in config.yaml, but was not found.")
 
         self._config = config
@@ -29,7 +32,7 @@ class ParquetPolygonDataSource(DataSource):
             update_main_from_following()
 
         # ----- get minimal cols ----- #
-        path: str = self._config.parquet_store.path
+        path: str = self._config.data.polygon.parquet_path
         df: DataFrame = pd.read_parquet(path, columns=["ticker", "t", "o", "h", "l", "c", "v"])
 
         # ----- filter symbols ----- #
@@ -61,7 +64,7 @@ class ParquetPolygonDataSource(DataSource):
         if exec_tf not in ALLOWED_TFS:
             raise ConfigError(f"Unrecognised timeframe: {exec_tf}")
 
-        if exec_tf != self._config.parquet_store.base_resolution:
+        if exec_tf != self._config.data.polygon.base_resolution:
             df = self._resample(df, exec_tf)
 
         df = df.sort_values(["t", "ticker"], kind="stable")

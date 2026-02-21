@@ -40,6 +40,7 @@ import sys
 import time
 import logging
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
 import pandas as pd
@@ -55,11 +56,17 @@ API_BASE = "https://api.polygon.io"
 API_KEY = os.environ.get("POLYGON_API_KEY", "")
 
 # File paths (can be overridden via env)
+HERE = Path(__file__).resolve().parent
+DATA_DIR = HERE / "data"
+
 FOLLOWING_PARQUET = os.environ.get(
-    "FOLLOWING_PARQUET", os.path.join("data_layer", "following.parquet")
+    "FOLLOWING_PARQUET",
+    str(DATA_DIR / "following.parquet")
 )
+
 MAIN_PARQUET = os.environ.get(
-    "MAIN_PARQUET", os.path.join("data_layer", "main.parquet")
+    "MAIN_PARQUET",
+    str(DATA_DIR / "main.parquet")
 )
 
 # Aggregates configuration

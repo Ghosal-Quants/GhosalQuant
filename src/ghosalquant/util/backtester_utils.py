@@ -3,6 +3,7 @@ from datetime import datetime
 from pathlib import Path
 
 from ..core.types import BacktestKPMs, SignalType
+from ..portfolio.portfolio_base import Portfolio
 from ..util.deprecation import deprecated
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -68,3 +69,31 @@ def calculate_stats(df_results: pd.DataFrame) -> BacktestKPMs:
 
     print(str(stats))
     return stats
+
+
+def calculate_kpms(portfolio: Portfolio) -> BacktestKPMs:
+    trades = list(portfolio.closed_trades)
+    total_trades = len(trades)
+
+    wins = 0
+    losses = 0
+    for t in trades:
+        if (t.realised_pnl or 0.0) > 0.0: # Default to 0.0 if None
+            wins += 1
+        elif (t.realised_pnl or 0.0) < 0.0:
+            losses += 1
+
+    if total_trades > 0:
+        win_rate = (wins / total_trades) * 100.0
+    else:
+        win_rate = 0.0
+
+    return BacktestKPMs(
+        total_trades=total_trades,
+        total_wins=wins,
+        total_losses=losses,
+        win_rate_pct=win_rate,
+        realised_pnl=portfolio.realised_pnl,
+        unrealised_pnl=portfolio.unrealised_pnl,
+        total_pnl=portfolio.total_pnl
+    )

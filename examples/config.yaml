@@ -3,9 +3,9 @@
 # ------------------------------------------------
 SYSTEM:
   # The location of the historical data files
-  symbols: ["AAPL"]
+  symbols: ["NVDA", "SPY"]
   # The timeframe for the main data (e.g., 1H, 30Min, 1D)
-  main_timeframe: "1H"
+  main_timeframe: "1D"
   # The timeframe for signal evaluation (e.g., 5Min) (if using Parquet, must be >= base_resolution)
   execution_timeframe: "5Min"
   # Use multiprocessing for faster testing
@@ -13,7 +13,7 @@ SYSTEM:
   # Number of CPU cores to dedicate to the process
   # num_processes: 4
   # do we want fresh candles downloaded?
-  fresh_candles: True
+  fresh_candles: False
 
   # Use the built-in risk manager
   use_risk_manager: True
@@ -22,7 +22,7 @@ SYSTEM:
 # Data Source Configuration
 # ------------------------------------------------
 DATA:
-  source: "polygon" # Options: "polygon", "yfinance"
+  source: "yfinance" # Options: "polygon", "yfinance"
   # Only the section specified in the "source" field will be used. The other section will be ignored.
   polygon:
     api_key: "API_KEY"
