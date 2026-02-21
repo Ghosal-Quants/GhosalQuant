@@ -1,5 +1,4 @@
 from abc import ABC, abstractmethod
-from typing import List, Optional
 
 from ..core.types import Order, Fill
 
@@ -30,7 +29,7 @@ class Broker(ABC):
         ...
 
     @abstractmethod
-    def get_fills(self) -> List[Fill]:
+    def get_fills(self) -> list[Fill]:
         """
         Get fills since the last call
 

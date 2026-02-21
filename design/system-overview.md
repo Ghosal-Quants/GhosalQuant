@@ -242,14 +242,34 @@ def equity_curve(self) -> Iterable[EquityPoint]: ...
 def realised_pnl(self) -> float: ...
 ```
 
-## 8 Configuration
+## 8 Brokers
+Brokers are implemented as subclasses of the abstract `Broker` base class from `ghosalquant.brokerage.broker_base`.
+
+It requires implementation for submitting and polling fills, using the following methods:
+```python
+@abstractmethod
+def submit(self, order: Order) -> str | None: ...
+
+@abstractmethod
+def get_fills(self) -> list[Fill]: ...
+```
+
+Additionally, as some brokers (such as `IBKRBroker`) require connection and disconnection, the following methods are optionally 
+implemented (otherwise they are no-ops):
+```python
+def connect(self) -> None: return None
+
+def close(self) -> None: return None
+```
+
+## 9 Configuration
 The backtesting system can be configured with a `Config` dataclass, which is created from a `config.yaml` file. The file
 defines what symbols to backtest, the time period, the data source, and the risk rules to apply.
 
 This config YAML is parsed at startup by `ghosalquant.util.config.load_config` and produces a strongly-typed `Config`
 dataclass instance which can be passed to a backtester.
 
-### 8.1 Config Structure
+### 9.1 Config Structure
 Currently, the YAML is split into four main sections:
 - `SYSTEM`: Defines execution parameters which affect the engine, but not anything related to strategy logic.
   - This information is loaded into a `SystemConfig` dataclass.
