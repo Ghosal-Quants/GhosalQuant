@@ -81,7 +81,7 @@ class Order:
         )
 
 
-@dataclass
+@dataclass(slots=True)
 class Trade:
     id: int
     symbol: str
@@ -97,9 +97,21 @@ class Trade:
         if self.signal_type is None:
             return 0.0
 
-        # sign of pnl for BUY is always +1 (win), for SELL is always -1 (win)
+        # sign of pnl for BUY is always +1 (profit when price rises), for SELL is always -1 (profit when price falls)
         sign: int = 1 if self.signal_type is SignalType.BUY else -1
         return sign * (current_price - self.entry_price) * self.size
+
+@dataclass(slots=True)
+class Fill:
+    time_stamp: datetime
+    symbol: str
+    side: SignalType
+    quantity: float
+    price: float
+
+    order_id: str | None = None
+    broker_order_id: str | None = None  # For things like IBKR IDs
+    commission: float | None = None
 
 @dataclass(frozen=True, slots=True)
 class BacktestKPMs:
