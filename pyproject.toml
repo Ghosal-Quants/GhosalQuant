@@ -16,7 +16,8 @@ dependencies = [
     "PyYAML",
     "dotenv",
     "pyarrow",
-    "fastparquet"
+    "fastparquet",
+    "ib_insync"
 ]
 
 [project.optional-dependencies]

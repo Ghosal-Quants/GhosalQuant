@@ -8,8 +8,6 @@ from ghosalquant.backtester.dataframe_backtester import DataFrameBacktester
 from ghosalquant.util.visualisation import plot_equity_curve
 
 if __name__ == "__main__":
-    print("Example Implementation With DataFrameBacktester: ")
-
     # strategy receives bars and produces directional intent signals (BUY / SELL)
     strategy = ExampleStrategy()
 

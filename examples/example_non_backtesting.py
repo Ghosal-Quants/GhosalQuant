@@ -8,8 +8,6 @@ from ghosalquant.risk.risk_manager import RiskManager
 from ghosalquant.util.visualisation import plot_equity_curve
 
 if __name__ == "__main__":
-    print("Example Implementation With Just Print: ")
-
     # strategy receives market data and produces buy/sell signal
     strategy = ExampleStrategy()
     

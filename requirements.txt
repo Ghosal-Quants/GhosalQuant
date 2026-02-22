@@ -18,3 +18,4 @@ dotenv
 customtkinter
 pyarrow
 fastparquet
+ib_insync

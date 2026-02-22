@@ -55,12 +55,38 @@ class TimeConfig:
     session_start_time: time
     session_end_time: time
 
+class BrokerType(str, Enum):
+    SIMULATED = 'simulated'
+    IBKR = 'ibkr'
+
+class BrokerMode(str, Enum):
+    PAPER = 'paper'
+    LIVE = 'simulated'
+
+@dataclass(frozen=True, slots=True)
+class SimBrokerConfig:
+    ...
+
+@dataclass(frozen=True, slots=True)
+class IBKRBrokerConfig:
+    host: str = "127.0.0.1"
+    port: int = 7497
+    client_id: int = 1
+
+@dataclass(frozen=True, slots=True)
+class BrokerConfig:
+    type: BrokerType
+    mode: BrokerMode
+    sim: SimBrokerConfig | None = None
+    ibkr: IBKRBrokerConfig | None = None
+
 @dataclass(frozen=True, slots=True)
 class Config:
     system: SystemConfig
     data: DataConfig
     time_range: TimeConfig
     risk: RiskConfig
+    broker: BrokerConfig | None = None
 
 # Validation Helpers
 def _assert_map(raw: Any, path: str) -> dict[str, Any]:

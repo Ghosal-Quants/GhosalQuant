@@ -4,14 +4,14 @@ from ..core.types import Order, Fill
 
 class Broker(ABC):
     # ----- Managing Connection ----- #
-    def connect(self) -> None:
+    async def connect(self) -> None:
         """
         Optionally can be overridden by subclasses if connection management is needed on startup
         (no-op for simulation brokers)
         """
         return None
 
-    def close(self) -> None:
+    async def disconnect(self) -> None:
         """
         Optionally can be overridden by subclasses if connection management is needed on shutdown
         (no-op for simulation brokers)

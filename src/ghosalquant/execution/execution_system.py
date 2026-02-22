@@ -5,7 +5,7 @@ from ..execution.sinks import SignalSink, PrintSink
 from ..risk.risk_manager import RiskManager
 from ..risk.types import RiskContext
 from ..portfolio.portfolio_base import Portfolio
-
+from ..brokerage.broker_base import Broker
 
 # ExecutionSystem coordinates the backtesting loop:
 #   - receives data
@@ -19,7 +19,8 @@ class ExecutionSystem:
             strategy: Strategy,
             signal_destination: SignalSink | None = None,
             risk_manager: RiskManager | None = None,
-            portfolio: Portfolio | None = None
+            portfolio: Portfolio | None = None,
+            broker: Broker | None = None
     ) -> None:
 
         self.data_src = data_src
@@ -30,12 +31,16 @@ class ExecutionSystem:
 
         self.risk_manager = risk_manager
         self.portfolio = portfolio
+        self.broker = broker
 
         if self.portfolio is not None and self.risk_manager is None:
             raise ValueError("A RiskManager has to be used in combination with a Portfolio.")
 
 
     async def run(self) -> None:
+        if self.broker:
+            await self.broker.connect()
+
         self.strategy.on_start()
 
         try:
@@ -63,5 +68,14 @@ class ExecutionSystem:
                         continue
 
                     await self.portfolio.process_order(order)
+        except Exception as e:
+            print(f"ExecutionSystem encountered an error: {e}")
+            self.strategy.on_end()
+
+            if self.broker:
+                await self.broker.disconnect()
         finally:
             self.strategy.on_end()
+
+            if self.broker:
+                await self.broker.disconnect()
