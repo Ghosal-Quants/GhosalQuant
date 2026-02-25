@@ -19,3 +19,4 @@ customtkinter
 pyarrow
 fastparquet
 ib_insync
+websockets

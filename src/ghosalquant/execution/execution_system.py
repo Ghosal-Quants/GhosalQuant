@@ -1,3 +1,6 @@
+import asyncio
+import sys
+
 from ..core.types import Signal, SignalType, Order
 from ..data_layer.datasource_base import DataSource
 from ..execution.strategy_base import Strategy
@@ -68,12 +71,20 @@ class ExecutionSystem:
                         continue
 
                     await self.portfolio.process_order(order)
-        except Exception as e:
-            print(f"ExecutionSystem encountered an error: {e}")
+        except (KeyboardInterrupt, asyncio.CancelledError):
             self.strategy.on_end()
 
             if self.broker:
                 await self.broker.disconnect()
+
+            print("ExecutionSystem: Execution interrupted by user.", file=sys.stderr)
+        except Exception as e:
+            self.strategy.on_end()
+
+            if self.broker:
+                await self.broker.disconnect()
+
+            raise e
         finally:
             self.strategy.on_end()
 

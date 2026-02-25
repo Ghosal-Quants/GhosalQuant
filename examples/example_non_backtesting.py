@@ -1,6 +1,7 @@
+from ghosalquant.data_layer.live_polygon_datasource import LivePolygonDataSource
+from ghosalquant.data_layer.yfinance_datasource import YFinanceDataSource
 from ghosalquant.execution.execution_system import ExecutionSystem
 from example_strategy import ExampleStrategy
-from ghosalquant.data_layer.yfinance_datasource import YFinanceDataSource
 import asyncio
 
 from ghosalquant.portfolio.basic_portfolio import BasicPortfolio
@@ -10,7 +11,8 @@ from ghosalquant.util.visualisation import plot_equity_curve
 if __name__ == "__main__":
     # strategy receives market data and produces buy/sell signal
     strategy = ExampleStrategy()
-    
+
+    """
     # this is a sample implementation of what the data source could look like
     # DataSource is just a yfinance wrapper with hard coded variables 
     # it provides historical market data as an async iterable of Bar objects
@@ -22,6 +24,13 @@ if __name__ == "__main__":
         end_day=31,
         end_month=12,
         end_year=2025
+    )
+    """
+    data = LivePolygonDataSource(
+        api_key = "...",
+        symbols = ["AAPL"],
+        base_resolution = "1SEC",
+        websocket_url = "wss://delayed.polygon.io/stocks"
     )
 
     portfolio = BasicPortfolio()

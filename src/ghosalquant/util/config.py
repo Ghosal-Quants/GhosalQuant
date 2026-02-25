@@ -38,6 +38,11 @@ class PolygonConfig:
     parquet_path: str
     base_resolution: str = "1Min" # The resolution of the underlying data
 
+@dataclass(frozen=True, slots=True)
+class LivePolygonConfig:
+    api_key: str
+    base_resolution: str = "1Min" # 1Sec, 1Min, ...
+
 class DataSrcType(str, Enum):
     YFINANCE = 'yfinance'
     POLYGON = 'polygon'
