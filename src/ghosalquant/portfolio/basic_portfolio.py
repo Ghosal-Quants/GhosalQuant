@@ -131,12 +131,12 @@ class BasicPortfolio(Portfolio):
         if order.quantity is None:
             raise ValueError("Order quantity cannot be None")
 
-        notional: float = float(order.price) * float(order.quantity)
+        notional: float = float(order.ref_price) * float(order.quantity)
         fee: float = self._calc_fee(notional)
         total_cost: float = notional + fee
 
         if total_cost > self._cash: # We reject rather than clip size
-            #print(f"[Portfolio]: Not enough cash to execute BUY order for {order.symbol}: cost={cost:.2f} cash={self._cash:.2f} qty={order.quantity} price={order.price}")
+            #print(f"[Portfolio]: Not enough cash to execute BUY order for {order.symbol}: cost={cost:.2f} cash={self._cash:.2f} qty={order.quantity} ref_price={order.ref_price}")
             return
 
         self._cash -= total_cost
@@ -150,7 +150,7 @@ class BasicPortfolio(Portfolio):
             id=trade_id,
             symbol=order.symbol,
             signal_type=SignalType.BUY,
-            entry_price=order.price,
+            entry_price=order.ref_price,
             size=order.quantity,
             open_time=order.time_stamp
         )
@@ -171,7 +171,7 @@ class BasicPortfolio(Portfolio):
             return
 
         close_qty: float = order.quantity
-        close_price: float = order.price
+        close_price: float = order.ref_price
         time: datetime = order.time_stamp
 
         trade_ids_in_order = sorted(trades.keys(), reverse=True)  # LIFO

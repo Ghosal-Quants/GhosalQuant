@@ -24,7 +24,7 @@ class RiskManager:
             symbol= signal.symbol,
             side= signal.signal_type,
             quantity= signal.quantity,
-            price= float(signal.price),
+            price= float(signal.ref_price),
             metadata= {} if signal.metadata is None else dict(signal.metadata)
         )
         draft.metadata["confidence"] = signal.confidence
@@ -41,6 +41,6 @@ class RiskManager:
             symbol=draft.symbol,
             side=draft.side,
             quantity=draft.quantity,
-            price=draft.price,
+            ref_price=draft.price,
             metadata=draft.metadata or None
         )

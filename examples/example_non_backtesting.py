@@ -30,7 +30,7 @@ if __name__ == "__main__":
         api_key = "...",
         symbols = ["AAPL"],
         base_resolution = "1SEC",
-        websocket_url = "wss://delayed.polygon.io/stocks"
+        websocket_url = "wss://delayed.massive.com/stocks"
     )
 
     portfolio = BasicPortfolio()

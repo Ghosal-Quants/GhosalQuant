@@ -16,10 +16,16 @@ class LivePolygonDataSource(DataSource):
             symbols: Iterable[str],
             base_resolution: str = "1MIN", # 1SEC, 1MIN, ...
             *,
-            websocket_url: str = "wss://socket.massive.com/stocks",
+            websocket_url: str = "wss://delayed.massive.com/stocks",  # Default to 15 min delayed data
             reconnect_base_sec: float = 0.5,
             reconnect_max_sec: float = 10.0
     ):
+        """
+        A live data source that connects to Polygon's WebSocket API for live stock bars.
+
+        "wss://delayed.massive.com/stocks" is the endpoint for delayed data
+        "wss://socket.massive.com/stocks" is the endpoint for delayed data
+        """
         symbols = tuple(sym.strip().upper() for sym in symbols if sym and sym.strip())
         if not symbols:
             raise ValueError("At least one valid symbol must be provided.")

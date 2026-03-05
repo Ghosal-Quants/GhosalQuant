@@ -10,11 +10,6 @@ from ..risk.types import RiskContext
 from ..portfolio.portfolio_base import Portfolio
 from ..brokerage.broker_base import Broker
 
-# ExecutionSystem coordinates the backtesting loop:
-#   - receives data
-#   - feeds it into the strategy
-#   - TODO: redirect the signals to a RiskManger or Broker
-
 class ExecutionSystem:
     def __init__(
             self,

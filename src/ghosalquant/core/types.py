@@ -23,7 +23,7 @@ class Signal:
     time_stamp: datetime
     symbol: str
     signal_type: SignalType | None 
-    price: float
+    ref_price: float
     confidence: float = 1.0
     quantity: float | None = None
     metadata: dict[str, Any] | None = None
@@ -35,7 +35,7 @@ class Signal:
         if not (0.0 <= self.confidence <= 1.0):
             raise ValueError("Confidence must be between 0.0 and 1.0")
 
-        if self.price is not None and not isinstance(self.price, (int, float)):
+        if self.ref_price is not None and not isinstance(self.ref_price, (int, float)):
             raise TypeError("Price must be a number or None")
 
     def __str__(self) -> str:
@@ -44,7 +44,7 @@ class Signal:
             +f"Timestamp: {self.time_stamp}, "
             +f"Symbol: {self.symbol}, "
             +f"Confidence: {self.confidence}"
-            +(", Price: " + str(self.price) if self.price is not None else "")
+            +(", Price: " + str(self.ref_price) if self.ref_price is not None else "")
             +(", Metadata: " + str(self.metadata) if self.metadata is not None else "")
         )
 
@@ -57,7 +57,7 @@ class Order:
     symbol: str
     side: SignalType
     quantity: float
-    price: float
+    ref_price: float
     metadata: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
@@ -67,8 +67,8 @@ class Order:
         if self.quantity <= 0:
             raise ValueError("Order quantity must be > 0")
 
-        if not isinstance(self.price, (int, float)):
-            raise TypeError("Order price must be numeric")
+        if not isinstance(self.ref_price, (int, float)):
+            raise TypeError("Order ref_price must be numeric")
 
     def __str__(self) -> str:
         return (
@@ -76,7 +76,7 @@ class Order:
                 +f"Timestamp: {self.time_stamp}, "
                 +f"Symbol: {self.symbol}, "
                 +f"Quantity: {self.quantity}, "
-                +f"Price: {self.price}"
+                +f"Price: {self.ref_price}"
                 +(", Metadata: " + str(self.metadata) if self.metadata is not None else "")
         )
 

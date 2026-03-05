@@ -61,7 +61,7 @@ class ExampleStrategy(Strategy):
             time_stamp= bar.time_stamp,
             symbol= bar.symbol,
             signal_type= signal_type,
-            price= bar.close,
+            ref_price= bar.close,
             confidence= confidence,
             quantity= quantity,
             metadata= {

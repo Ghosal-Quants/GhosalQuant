@@ -1,7 +1,7 @@
 from ghosalquant import Strategy
 from ghosalquant.core.types import Bar, Signal, SignalType
 
-class BenchmarkBnHStrategy(Strategy):
+class BenchmarkBuyAndHold(Strategy):
     """
     Buy and hold benchmark strategy.
     - On a bar received with an unseen symbol, sends a BUY signal.
@@ -42,7 +42,7 @@ class BenchmarkBnHStrategy(Strategy):
                 time_stamp=bar.time_stamp,
                 symbol=symbol,
                 signal_type=SignalType.BUY,
-                price=bar.close,
+                ref_price=bar.close,
                 confidence=confidence,
                 quantity=quantity,
                 metadata=metadata if metadata else None,
