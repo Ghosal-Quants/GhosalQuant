@@ -1,10 +1,10 @@
 import asyncio
 import sys
 
-from ..core.types import Signal, SignalType, Order
+from ..core.types import Signal, Order
 from ..data_layer.datasource_base import DataSource
 from ..execution.strategy_base import Strategy
-from ..execution.sinks import SignalSink, PrintSink
+from ..execution.sinks import SignalSink
 from ..risk.risk_manager import RiskManager
 from ..risk.types import RiskContext
 from ..portfolio.portfolio_base import Portfolio
@@ -24,9 +24,7 @@ class ExecutionSystem:
         self.data_src = data_src
         self.strategy = strategy
 
-        # Signal pipeline
         self.sig_sink = signal_destination
-
         self.risk_manager = risk_manager
         self.portfolio = portfolio
         self.broker = broker
@@ -34,6 +32,8 @@ class ExecutionSystem:
         if self.portfolio is not None and self.risk_manager is None:
             raise ValueError("A RiskManager has to be used in combination with a Portfolio.")
 
+        if self.portfolio is not None and self.broker is None:
+            raise ValueError("A Broker has to be used in combination with a Portfolio.")
 
     async def run(self) -> None:
         if self.broker:
@@ -43,16 +43,21 @@ class ExecutionSystem:
 
         try:
             async for bar in self.data_src:
-                self.portfolio.update_equity(bar)
+                if self.portfolio:
+                    self.portfolio.update_equity(bar)
 
-                # Event handling
+                # Collect fills from the broker and pass to portfolio
+                if self.broker and self.portfolio:
+                    for fill in self.broker.get_fills():
+                        await self.portfolio.process_fill(fill)
+
+                # Generate signal from strategy
                 signal: Signal | None = self.strategy.on_market_data(bar)
 
-                # Strategy emitted no signal
                 if signal is None:
                     continue
 
-                # Actionable signal: send to sink
+                # Forward to optional signal sink
                 if self.sig_sink is not None:
                     await self.sig_sink.on_signal(signal)
 
@@ -62,10 +67,9 @@ class ExecutionSystem:
                     if order is None:
                         continue
 
-                    if self.portfolio is None:
-                        continue
+                    if self.broker:
+                        self.broker.submit(order)
 
-                    await self.portfolio.process_order(order)
         except (KeyboardInterrupt, asyncio.CancelledError):
             self.strategy.on_end()
 

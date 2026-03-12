@@ -6,7 +6,20 @@ from ..util.config import BrokerType, BrokerConfig, ConfigError
 
 def build_broker(broker_config: BrokerConfig) -> Broker:
     if broker_config.type == BrokerType.SIMULATED:
-        return SimBroker()
+        cfg = broker_config.sim
+        if cfg is None:
+            return SimBroker()
+        return SimBroker(
+            spread_bps=cfg.spread_bps,
+            slippage_mean_bps=cfg.slippage_mean_bps,
+            slippage_std_bps=cfg.slippage_std_bps,
+            commission_per_share=cfg.commission_per_share,
+            partial_fill_probability=cfg.partial_fill_probability,
+            reject_probability=cfg.reject_probability,
+            min_latency_ms=cfg.min_latency_ms,
+            max_latency_ms=cfg.max_latency_ms,
+            seed=cfg.seed,
+        )
     elif broker_config.type == BrokerType.IBKR:
         if broker_config.ibkr is None:
             raise ConfigError("IBKR configuration is missing.")

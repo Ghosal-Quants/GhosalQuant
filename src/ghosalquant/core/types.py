@@ -113,6 +113,14 @@ class Fill:
     broker_order_id: str | None = None  # For things like IBKR IDs
     commission: float | None = None
 
+@dataclass(slots=True)
+class OpenOrderState:
+    broker_order_id: str
+    order: Order
+    submitted_at: datetime
+    remaining_qty: float
+
+
 @dataclass(frozen=True, slots=True)
 class BacktestKPMs:
     total_trades: int

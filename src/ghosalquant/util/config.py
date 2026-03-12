@@ -70,7 +70,15 @@ class BrokerMode(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class SimBrokerConfig:
-    ...
+    spread_bps: float = 2.0
+    slippage_mean_bps: float = 0.5
+    slippage_std_bps: float = 1.0
+    commission_per_share: float = 0.0
+    partial_fill_probability: float = 0.0
+    reject_probability: float = 0.0
+    min_latency_ms: int = 0
+    max_latency_ms: int = 0
+    seed: int | None = None
 
 @dataclass(frozen=True, slots=True)
 class IBKRBrokerConfig:

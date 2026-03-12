@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from ib_insync import (
     IB,
@@ -92,7 +92,7 @@ class IBKRBroker(Broker):
 
         self._fill_queue.append(
             Fill(
-                time_stamp=fill.time if isinstance(fill.time, datetime) else datetime.utcnow(),
+                time_stamp=fill.time if isinstance(fill.time, datetime) else datetime.now(timezone.utc),
                 symbol=symbol,
                 side=side,
                 quantity=float(getattr(execution, "shares", 0.0)),
