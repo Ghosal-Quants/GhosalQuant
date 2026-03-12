@@ -1,29 +1,24 @@
 from datetime import datetime
 from typing import Iterable
 
-from ..core.types import Trade, EquityPoint, Order, SignalType, Bar
+from ..core.types import Trade, EquityPoint, Fill, SignalType, Bar
 from ..portfolio.portfolio_base import Portfolio
 
 
 class BasicPortfolio(Portfolio):
     """
-    A basic portfolio implementation which handles opening and closing trades. Note that it assumes liquid markets.
+    A basic portfolio implementation which handles opening and closing trades.
     """
 
     def __init__(
             self,
             init_capital: float = 10_000.0,
-            fee_rate: float = 0.0015, # 0.15% per trade - 15 bps
-            min_fee: float = 0.0 # Floor
     ) -> None:
         self._init_capital: float = init_capital
         self._cash: float = init_capital
 
-        self._fee_rate: float = float(fee_rate)
-        self._min_fee: float = float(min_fee)
         self._fees_paid: float = 0.0
 
-        # Trades are uniquely identified by their id field but also by their symbol (cant close a trade of another symbol)
         # Symbol -> Trade ID -> Trade
         self._open_trades: dict[str, dict[int, Trade]] = {}
         self._closed_trades: list[Trade] = []
@@ -33,28 +28,20 @@ class BasicPortfolio(Portfolio):
         self._equity_points: list[EquityPoint] = []
         self._last_prices: dict[str, float] = {}
 
-    async def process_order(self, order: Order) -> None:
-        order_type: SignalType = order.side
-
-        if order_type is None:
-            return
-
-        if order.quantity is None:
-            raise ValueError("Order quantity cannot be None")
-
-        if order_type == SignalType.BUY:
-            self._open(order)
-        elif order_type == SignalType.SELL:
-            self._close(order)
+    async def process_fill(self, fill: Fill) -> None:
+        if fill.side == SignalType.BUY:
+            self._open(fill)
+        elif fill.side == SignalType.SELL:
+            self._close(fill)
         else:
-            raise ValueError(f"Unsupported order type: {order_type}")
+            raise ValueError(f"Unsupported fill side: {fill.side}")
 
         self.snapshot_equity(
-            time_stamp= order.time_stamp,
+            time_stamp=fill.time_stamp,
             prices=self._last_prices
         )
 
-    def update_equity(self, bar: Bar): # Called by execution system once per bar
+    def update_equity(self, bar: Bar) -> None:
         self._last_prices[bar.symbol] = float(bar.close)
         self.snapshot_equity(
             time_stamp=bar.time_stamp,
@@ -121,58 +108,41 @@ class BasicPortfolio(Portfolio):
         return self._fees_paid
 
     # Helpers -------
-    def _calc_fee(self, notional: float) -> float:
-        fee = abs(float(notional)) * self._fee_rate
-        if fee < self._min_fee:
-            fee = self._min_fee
-        return fee
 
-    def _open(self, order: Order) -> None:
-        if order.quantity is None:
-            raise ValueError("Order quantity cannot be None")
+    def _open(self, fill: Fill) -> None:
+        commission: float = fill.commission or 0.0
+        notional: float = fill.price * fill.quantity
+        total_cost: float = notional + commission
 
-        notional: float = float(order.ref_price) * float(order.quantity)
-        fee: float = self._calc_fee(notional)
-        total_cost: float = notional + fee
-
-        if total_cost > self._cash: # We reject rather than clip size
-            #print(f"[Portfolio]: Not enough cash to execute BUY order for {order.symbol}: cost={cost:.2f} cash={self._cash:.2f} qty={order.quantity} ref_price={order.ref_price}")
+        if total_cost > self._cash:
             return
 
         self._cash -= total_cost
-        self._fees_paid += fee
-        self._realised_pnl -= fee
+        self._fees_paid += commission
+        self._realised_pnl -= commission
 
         trade_id: int = self._next_trade_id
         self._next_trade_id += 1
 
         trade = Trade(
             id=trade_id,
-            symbol=order.symbol,
+            symbol=fill.symbol,
             signal_type=SignalType.BUY,
-            entry_price=order.ref_price,
-            size=order.quantity,
-            open_time=order.time_stamp
+            entry_price=fill.price,
+            size=fill.quantity,
+            open_time=fill.time_stamp,
         )
-        if order.symbol not in self._open_trades:
-            self._open_trades[order.symbol] = {}
+        self._open_trades.setdefault(fill.symbol, {})[trade_id] = trade
 
-        self._open_trades[order.symbol][trade_id] = trade
-
-    def _close(self, order: Order) -> None:
-        if order.quantity is None:
-            raise ValueError("Order quantity cannot be None")
-
-        symbol: str = order.symbol
-        trades: dict = self._open_trades.get(symbol)
+    def _close(self, fill: Fill) -> None:
+        symbol: str = fill.symbol
+        trades: dict | None = self._open_trades.get(symbol)
         if not trades:
-            # Ideally this should raise an error, but strategies might not be that smart
-            # raise RuntimeError(f"SELL order received for {symbol}, but no open trades exist.")
             return
 
-        close_qty: float = order.quantity
-        close_price: float = order.ref_price
-        time: datetime = order.time_stamp
+        close_qty: float = fill.quantity
+        close_price: float = fill.price
+        commission: float = fill.commission or 0.0
 
         trade_ids_in_order = sorted(trades.keys(), reverse=True)  # LIFO
 
@@ -185,30 +155,21 @@ class BasicPortfolio(Portfolio):
             # Amount we are closing form this trade
             qty_to_close: float = min(trade.size, close_qty)
 
-            # fee on close
+            leg_commission = commission * (qty_to_close / fill.quantity)
+
             notional = qty_to_close * close_price
-            fee: float = self._calc_fee(notional)
-
-            # Find realised pnl
-            realised = (close_price - trade.entry_price) * qty_to_close - fee
+            realised = (close_price - trade.entry_price) * qty_to_close - leg_commission
             self._realised_pnl += realised
-
-            # Cash received from sale
-            self._cash += notional - fee
-
-            # Fees tracking
-            self._fees_paid += fee
+            self._cash += notional - leg_commission
+            self._fees_paid += leg_commission
 
             if trade.size <= close_qty:
-                # Close entire trade
-                trade.close_time = time
-                trade.realised_pnl = trade.unrealised_pnl(close_price) - fee
+                trade.close_time = fill.time_stamp
+                trade.realised_pnl = trade.unrealised_pnl(close_price) - leg_commission
                 self._closed_trades.append(trade)
-
                 close_qty -= trade.size
                 del trades[trade_id]
             else:
-                # Partially close trade, and make a new closed trade record
                 new_trade_id: int = self._next_trade_id
                 self._next_trade_id += 1
 
@@ -219,10 +180,9 @@ class BasicPortfolio(Portfolio):
                     entry_price=trade.entry_price,
                     size=qty_to_close,
                     open_time=trade.open_time,
-                    close_time=time,
+                    close_time=fill.time_stamp,
                 )
-                closed_trade.realised_pnl = (close_price - trade.entry_price) * qty_to_close - fee
-
+                closed_trade.realised_pnl = (close_price - trade.entry_price) * qty_to_close - leg_commission
                 self._closed_trades.append(closed_trade)
 
                 trade.size -= qty_to_close
