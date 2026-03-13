@@ -13,19 +13,21 @@ the code and have them reflected immediately, and keep up to date with the remot
 ## Creating a Strategy
 The way strategies are created in GhosalQuant is by creating a class which inherits from the `Strategy` base class as 
 follows (hopefully your strategies will be more intelligent than this example!):
+
 ```python
 from ghosalquant import Strategy
 from ghosalquant.core.types import Bar, Signal, SignalType
+
 
 class MyStrategy(Strategy):
     def __init__(self):
         super().__init__()
         self.prev_bar: Bar | None = None
 
-    def on_start(self): # Required, but can be left empty
+    def on_start(self):  # Required, but can be left empty
         print("MyStrategy started executing.")
 
-    def on_end(self): # Required, but can be left empty
+    def on_end(self):  # Required, but can be left empty
         print("MyStrategy finished executing.")
         # You can use this to perform any cleanup or final calculations at the end of a backtest or trading session
 
@@ -45,30 +47,135 @@ class MyStrategy(Strategy):
             return None
 
         self.prev_bar = bar
-        confidence = 1.0 # Actual strategies should employ more robust confidence calculations
+        confidence = 1.0  # Actual strategies should employ more robust confidence calculations
         # A confidence of 1.0 will mean the risk engine will be unlikely to reject or downscale the signal
         # A confidence of 0.0 will mean the risk engine will be likely to reject or downscale the signal
 
         return Signal(
-            time_stamp= bar.time_stamp,
-            symbol= bar.symbol,
-            signal_type= signal_type,
-            price= bar.close,
-            confidence= confidence,
+            time_stamp=bar.time_stamp,
+            symbol=bar.symbol,
+            signal_type=signal_type,
+            ref_price=bar.close,
+            confidence=confidence,
         )
 ```
 
-## Configuring a Backtest
-Now that you have a strategy, you can backtest it on some historical data. The GhosalQuant library does provide some 
-backtesters, but you first need to specify some things before you can run a backtest.
+## Config File
+Before running a backtest, create a `config.yaml` (see `examples/config.yaml` for a full example). The key sections:
 
-See `examples/config.yaml` for an example of a backtest configuration file. These are the sections which need to be 
-specified in the configuration file:
+```yaml
+SYSTEM:
+  symbols: ["AAPL"]
+  main_timeframe: "1D"
+  execution_timeframe: "5Min"
+  fresh_candles: False
+  use_risk_manager: True
 
-### Specifying Data Sources in the Backtest Configuration File
-Some common examples of data sources include:
-- YFinance (`YFinanceDataSource`)
-- Polygon (`ParquetPolygonDataSource`)
-- pandas `DataFrame`s (`DataFrameDataSource`)
-- Lists of `Bar` objects (`ListDataSource`)
+DATA:
+  source: "yfinance"   # or "polygon"
+  yfinance: {}
+
+TIME_RANGE:
+  start_date: "2024-01-01"
+  end_date: "2025-12-31"
+  session_start_time: "09:00"
+  session_end_time: "17:00"
+
+RISK:
+  rules:
+    - name: "MaxOpenPositions"
+      max_open_positions: 3
+    - name: "ConfidenceSizer"
+      min_quantity: 0.0
+      max_quantity: 10.0
+```
+
+## Running a Backtest
+
+### Option 1: DataFrameBacktester (bring your own DataFrame)
+```python
+import yfinance as yf
+from matplotlib import pyplot as plt
+from my_strategy import MyStrategy
+from ghosalquant.backtester.dataframe_backtester import DataFrameBacktester
+from ghosalquant.util.visualisation import plot_equity_curve
+
+df = yf.download("AAPL", start="2024-01-01", end="2025-12-31", auto_adjust=True, progress=False)
+
+backtester = DataFrameBacktester(
+    strategy=MyStrategy(),
+    dataframe=df,
+    config_path="config.yaml"
+)
+
+kpms = backtester.run()
+print(kpms)
+
+plot_equity_curve(backtester.equity_curve, show_realised_unrealised=True)
+plt.show()
+```
+
+### Option 2: Backtester.from_config (data sourced from config)
+```python
+from my_strategy import MyStrategy
+from ghosalquant.backtester.backtester_base import Backtester
+
+backtester = Backtester.from_config(
+    strategy=MyStrategy(),
+    config_path="config.yaml"
+)
+kpms = backtester.run()
+print(kpms)
+```
+This creates the data source automatically based on whatever is in your config file.
+
+### What you get back
+`backtester.run()` returns a `BacktestKPMs` object with: `total_trades`, `total_wins`, `total_losses`, `win_rate_pct`, 
+`realised_pnl`, `unrealised_pnl`, `total_pnl`.
+
+You can also access `backtester.equity_curve`, `backtester.realised_pnl`, `backtester.unrealised_pnl`, etc. after the 
+run.
+
+## Comparing Strategies
+You can overlay multiple equity curves on one chart:
+```python
+from ghosalquant.util.visualisation import plot_equity_curve
+
+ax = plot_equity_curve(bt1.equity_curve, label="My Strategy")
+plot_equity_curve(bt2.equity_curve, label="Buy & Hold", ax=ax)
+plt.show()
+```
+
+## Running Live / Paper (without backtesting)
+You can use the `ExecutionSystem` directly with a real or simulated broker:
+```python
+import asyncio
+from my_strategy import MyStrategy
+from ghosalquant.execution.execution_system import ExecutionSystem
+from ghosalquant.data_layer.yfinance_datasource import YFinanceDataSource
+from ghosalquant.risk.risk_manager import RiskManager
+from ghosalquant.portfolio.basic_portfolio import BasicPortfolio
+from ghosalquant.brokerage.ibkr import IBKRBroker  # or SimBroker for simulated
+
+execution_system = ExecutionSystem(
+    strategy=MyStrategy(),
+    data_src=YFinanceDataSource("AAPL", start="2025-01-01", end="2025-12-31"),
+    risk_manager=RiskManager(),
+    portfolio=BasicPortfolio(),
+    broker=IBKRBroker(port=4002),  # connects to TWS/Gateway
+)
+
+asyncio.run(execution_system.run())
+```
+
+## Quick Reference
+
+| What you want | What to use |
+|---|---|
+| Backtest with a DataFrame | `DataFrameBacktester` |
+| Backtest from config (auto data) | `Backtester.from_config()` |
+| Live / paper trading | `ExecutionSystem` + `IBKRBroker` |
+| Simulated execution | `ExecutionSystem` + `SimBroker` |
+| Plot equity curves | `plot_equity_curve()` |
+| Compare strategies | Pass `ax=` to overlay on same chart |
 

@@ -1,9 +1,46 @@
 # GhosalQuant
 Ghosal Fund | Quantitative Trading Team Repository
 
-## System Overview
+A modular Python framework for developing, backtesting, and executing quantitative trading strategies.
 
-Go to [the system design overview](design/system-overview.md) for full details.
+## Documentation
+- [System Overview](design/system-overview.md) - architecture + data flow
+- [User Guide](design/user_guide.md) - getting started + quick reference
+
+## Installation
+```bash
+git clone https://github.com/tomlaustin/GhosalQuant.git
+cd GhosalQuant
+pip install -e .
+```
+
+## Quick Start
+1. **Write a strategy** — subclass `Strategy`, implement `on_market_data(bar) -> Signal | None`
+2. **Create a config** — see `examples/config.yaml`
+3. **Run a backtest**:
+```python
+from ghosalquant.backtester.backtester_base import Backtester
+from my_strategy import MyStrategy
+
+kpms = Backtester.from_config(strategy=MyStrategy(), config_path="config.yaml").run()
+print(kpms)
+```
+
+See `examples/` for more examples for: DataFrame backtesting, strategy comparison, IBKR paper trading, and live data.
+
+## Project Structure
+```
+src/ghosalquant/
+  core/           # Bar, Signal, Order, Fill, Trade types
+  execution/      # Strategy base, ExecutionSystem, signal sinks, benchmarks
+  data_layer/     # DataSource implementations (yfinance, Polygon, DataFrame, list)
+  backtester/     # Backtester, DataFrameBacktester
+  risk/           # RiskManager, rules (MaxOpenPositions, ConfidenceSizer)
+  portfolio/      # Portfolio protocol, BasicPortfolio
+  brokerage/      # Broker base, SimBroker, IBKRBroker
+  util/           # Config, visualisation, helpers
+examples/         # Ready-to-run scripts and sample config
+```
 
 ## Tom's Notes
 
