@@ -45,6 +45,7 @@ class LivePolygonConfig:
 
 class DataSrcType(str, Enum):
     YFINANCE = 'yfinance'
+    LIVE_IBKR = 'live_ibkr'
     POLYGON = 'polygon'
 
 @dataclass(frozen=True, slots=True)
@@ -159,6 +160,8 @@ def load_config(file_path: str | Path) -> Config:
             data_source = DataSrcType.YFINANCE
         elif data_source_str == "polygon":
             data_source = DataSrcType.POLYGON
+        elif data_source_str == "live_ibkr":
+            data_source = DataSrcType.LIVE_IBKR
         else:
             raise ConfigError(f"DATA.source must be one of {[str(e) for e in DataSrcType]}. Got: {data_source_str}")
 

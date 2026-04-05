@@ -1,12 +1,16 @@
-from ghosalquant.data_layer.live_polygon_datasource import LivePolygonDataSource
-from ghosalquant.data_layer.yfinance_datasource import YFinanceDataSource
-from ghosalquant.execution.execution_system import ExecutionSystem
+from ghosalquant.data_layer import LivePolygonDataSource, YFinanceDataSource
+from ghosalquant.execution import ExecutionSystem
+from ghosalquant.portfolio import BasicPortfolio
+from ghosalquant.risk import RiskManager
+from ghosalquant.util.visualisation import plot_equity_curve
+
 from example_strategy import ExampleStrategy
+
+import os
+from dotenv import load_dotenv
+load_dotenv()
 import asyncio
 
-from ghosalquant.portfolio.basic_portfolio import BasicPortfolio
-from ghosalquant.risk.risk_manager import RiskManager
-from ghosalquant.util.visualisation import plot_equity_curve
 
 if __name__ == "__main__":
     # strategy receives market data and produces buy/sell signal
@@ -27,7 +31,7 @@ if __name__ == "__main__":
     )
     """
     data = LivePolygonDataSource(
-        api_key = "...",
+        api_key = os.environ.get("POLYGON_API_KEY"),
         symbols = ["AAPL"],
         base_resolution = "1SEC",
         websocket_url = "wss://delayed.massive.com/stocks"

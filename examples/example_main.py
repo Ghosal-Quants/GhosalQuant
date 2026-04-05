@@ -3,8 +3,7 @@ import pandas as pd
 from matplotlib import pyplot as plt
 
 from example_strategy import ExampleStrategy
-from ghosalquant.backtester.backtester_base import Backtester
-from ghosalquant.backtester.dataframe_backtester import DataFrameBacktester
+from ghosalquant.backtester import Backtester, DataFrameBacktester
 from ghosalquant.util.visualisation import plot_equity_curve
 
 if __name__ == "__main__":

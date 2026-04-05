@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from typing import Iterable
 
 from ib_insync import (
     IB,
@@ -8,7 +9,8 @@ from ib_insync import (
     StopOrder,
     StopLimitOrder,
     Trade as IBTrade,
-    Fill as IBFill
+    Fill as IBFill,
+    Contract
 )
 
 from .broker_base import Broker
@@ -25,6 +27,8 @@ class IBKRBroker(Broker):
             mode: BrokerMode = BrokerMode.PAPER,
             connect_timeout_s: float = 5.0,
             handshake_timeout_s: float = 5.0,
+            # Default to sending stock order to SMART
+            contract_overrides: Iterable[Contract] | None = None
     ) -> None:
         super().__init__()
         self.ib = IB()
@@ -34,6 +38,9 @@ class IBKRBroker(Broker):
         self.mode = mode
         self.connect_timeout_s = float(connect_timeout_s)
         self.handshake_timeout_s = float(handshake_timeout_s)
+
+        # lookup for contract overrides
+        self.contract_map = {c.symbol: c for c in (contract_overrides or [])}
 
         self._fill_queue: list[Fill] = []
         self._events_wired = False
@@ -62,7 +69,10 @@ class IBKRBroker(Broker):
         if not self.ib.isConnected():
             raise RuntimeError("IBKRBroker is not connected. Call connect() before submitting orders.")
 
-        contract = Stock(order.symbol, "SMART", "USD")
+        contract = self.contract_map.get(
+            order.symbol,
+            Stock(order.symbol, "SMART", "USD")
+        )
         action = "BUY" if order.side is SignalType.BUY else "SELL"
         ib_order = MarketOrder(action, float(order.quantity))
 

@@ -1,5 +1,5 @@
-from ghosalquant import Strategy
-from ghosalquant.core.types import Bar, Signal, SignalType
+from ..execution.strategy_base import Strategy
+from ..core.types import Bar, Signal, SignalType
 
 class BenchmarkBuyAndHold(Strategy):
     """

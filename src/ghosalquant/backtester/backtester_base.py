@@ -10,6 +10,7 @@ from ..execution.sinks import SignalSink
 from ..core.types import Order, BacktestKPMs, EquityPoint
 from ..portfolio.basic_portfolio import BasicPortfolio
 from ..portfolio.portfolio_base import Portfolio
+from ..brokerage.broker_base import Broker
 from ..risk.builder import build_risk_manager
 from ..risk.risk_manager import RiskManager
 from ..util.backtester_utils import calculate_kpms
@@ -25,6 +26,7 @@ class Backtester:
             signal_destination: SignalSink | None = None,
             portfolio: Portfolio | None = None,
             risk_manager: RiskManager | None = None,
+            broker: Broker | None = None,
             config: Config | None = None
     ) -> None:
         self.config = config
