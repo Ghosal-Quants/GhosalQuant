@@ -9,6 +9,7 @@
 __pycache__/
 */__pycache__/
 *.pyc
+*.egg-info/
 
 # Venvs
 .venv/
@@ -17,3 +18,4 @@ venv/
 # Other
 .DS_Store
 .env
+src/ghosalquant/data_layer/data/*.parquet

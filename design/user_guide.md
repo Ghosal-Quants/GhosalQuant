@@ -72,8 +72,13 @@ SYSTEM:
   use_risk_manager: True
 
 DATA:
-  source: "yfinance"   # or "polygon"
+  source: "yfinance"   # or "polygon" / "live_ibkr"
   yfinance: {}
+  # live_ibkr:
+  #   host: "127.0.0.1"
+  #   port: 7497
+  #   client_id: 2
+  #   bar_resolution_sec: 1
 
 TIME_RANGE:
   start_date: "2024-01-01"
@@ -88,7 +93,22 @@ RISK:
     - name: "ConfidenceSizer"
       min_quantity: 0.0
       max_quantity: 10.0
+
+BROKERAGE:
+  type: "simulated"
+  mode: "paper"
+  sim: {}
+  # ibkr:
+  #   host: "127.0.0.1"
+  #   port: 4002
+  #   client_id: 1
 ```
+
+`BROKERAGE.type` selects the active broker configuration. It is fine to keep both `sim` and `ibkr` sections in the
+same file and only use one at a time.
+
+`DATA.source` works the same way for market data. A live IBKR configuration stays under `DATA.live_ibkr`, separate
+from `BROKERAGE.ibkr`, so you can switch data source and execution broker independently.
 
 ## Running a Backtest
 

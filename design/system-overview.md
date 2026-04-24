@@ -95,6 +95,7 @@ orders, and a broker (simulated or real) handles execution and fills.
           - Connects the broker (if present).
           - Calls `strategy.on_start()`.
           - For each `Bar` from the `DataSource`:
+            - Passes the bar to the `Broker` so simulation brokers can advance market state.
             - Updates portfolio equity from the bar.
             - Collects fills from the broker and passes them to the portfolio.
             - Calls `strategy.on_market_data(bar)` to get a `Signal`.
@@ -126,8 +127,9 @@ DataSource -> ExecutionSystem -> Strategy -> Signal
 ```
 
 On every bar the `ExecutionSystem` also:
-1. Updates the `Portfolio` equity from the latest bar price.
-2. Drains any new `Fill`s from the `Broker` and feeds them into the `Portfolio`.
+1. Passes the latest `Bar` to the `Broker`.
+2. Updates the `Portfolio` equity from the latest bar price.
+3. Drains any new `Fill`s from the `Broker` and feeds them into the `Portfolio`.
 
 ## 2 Core types
 The primary types used throughout the system can be imported from `ghosalquant.types`.
@@ -252,6 +254,9 @@ class OrderDraft:
 class RiskContext:
     open_positions: int = 0
     open_qty_by_symbol: dict[str, float]
+    current_drawdown: float | None = None
+    peak_equity: float | None = None
+    price_history: dict[str, list[float]] | None = None
 ```
 
 ## 3 Data Sources
@@ -269,10 +274,11 @@ async def __aiter__(self) -> AsyncIterable[Bar]: ...
 | `DataFrameDataSource` | `data_layer.dataframe_datasource` | Wraps an existing `pandas.DataFrame` and yields `Bar` objects row by row. Supports custom column names and optional symbol/timestamp columns. |
 | `ListDataSource` | `data_layer.list_datasource` | Wraps a `Sequence[Bar]` and yields them in order. Useful for testing. |
 | `ParquetPolygonDataSource` | `data_layer.parquet_polygon_datasource` | Reads Polygon OHLCV data from a local `.parquet` file. Supports date/session filtering and timeframe resampling. Driven by `Config`. |
+| `LiveIBKRDataSource` | `data_layer.live_ibkr_datasource` | Streams live IBKR ticks via `ib_insync`, emits `Bar` objects at a configurable throttled cadence, and steps down to delayed data when live market data is unavailable. |
 | `LivePolygonDataSource` | `data_layer.live_polygon_datasource` | Streams live (or 15-min delayed) bars from Polygon's WebSocket API. Supports `1SEC` and `1MIN` resolutions with automatic reconnection. |
 
 The `datasource_factory.datasource_from_config(cfg)` function creates the appropriate data source from a `Config`
-object (currently supports yfinance and Polygon parquet).
+object (currently supports yfinance, Polygon parquet, and live IBKR).
 
 ## 4 Strategies
 Strategies are subclasses of the abstract `Strategy` base class from `ghosalquant.execution.strategy_base`.
@@ -343,6 +349,9 @@ Risk management sits between signal generation and order execution. The `RiskMan
 |---|---|
 | `MaxOpenPositions` | Blocks `BUY` orders when the number of open positions reaches a configured limit (default 3). |
 | `ConfidenceSizer` | Linearly interpolates quantity between `min_quantity` and `max_quantity` based on signal confidence. Blocks the order if the resulting quantity is zero. |
+| `RegimeFilter` | Blocks or penalises orders based on `draft.metadata["regime"]`. |
+| `DrawdownKillSwitch` | Reduces or blocks new `BUY` orders based on portfolio drawdown. |
+| `CorrelationFilter` | Blocks new `BUY` orders when the proposed symbol is too correlated with currently held symbols. |
 
 ### 6.3 Building from Config
 `build_risk_manager(risk_config)` in `ghosalquant.risk.builder` constructs a `RiskManager` from a `RiskConfig`
@@ -405,6 +414,7 @@ Brokers are subclasses of the abstract `Broker` base class from `ghosalquant.bro
 class Broker(ABC):
     async def connect(self) -> None: ...      # Optional, no-op by default
     async def disconnect(self) -> None: ...   # Optional, no-op by default
+    def on_bar(self, bar: Bar) -> None: ...   # Optional, used by simulation brokers
 
     @abstractmethod
     def submit(self, order: Order) -> str | None: ...
@@ -420,11 +430,14 @@ A simulated broker (`ghosalquant.brokerage.simulated`) with configurable:
 - Commission per share
 - Partial fill probability
 - Reject probability
+- Maximum participation per bar volume
+- Participation-based market impact
 - Latency range (milliseconds)
 - Deterministic seed for reproducibility
 
-Orders are filled on the next `get_fills()` call (subject to latency). Fill price is computed from the order's
-`ref_price` plus adverse spread and random slippage.
+Orders are submitted after a strategy sees a bar and become eligible on a later bar once latency has elapsed. The
+broker uses `on_bar(bar)` to advance simulated market time, caps fills by bar volume participation, and prices fills
+from the eligible bar with spread, slippage, and participation-based impact.
 
 ### 9.2 `IBKRBroker`
 A live broker implementation (`ghosalquant.brokerage.ibkr`) using `ib_insync` to connect to Interactive Brokers TWS
@@ -451,15 +464,16 @@ The YAML is split into the following sections:
   - `fresh_candles`: Whether to re-download/update data before running.
   - `use_risk_manager`: Whether to enable the built-in risk manager.
 - **`DATA`**: Data source selection and settings.
-  - `source`: `"yfinance"` or `"polygon"`.
+  - `source`: `"yfinance"`, `"polygon"`, or `"live_ibkr"`.
   - `polygon`: Polygon-specific settings (`api_key`, `parquet_path`, `base_resolution`).
+  - `live_ibkr`: IBKR market-data settings (`host`, `port`, `client_id`, `bar_resolution_sec`).
   - `yfinance`: Currently empty, reserved for future options.
 - **`TIME_RANGE`**: Bounds for backtesting.
   - `start_date`, `end_date`: Date range.
   - `session_start_time`, `session_end_time`: Intraday session window.
 - **`RISK`**: Risk rules applied when `use_risk_manager` is `True`.
   - `rules`: A list of rule definitions, each with a `name` and rule-specific parameters.
-- **`BROKERAGE`** (optional): Broker configuration (not yet parsed by `load_config`; reserved for future use).
+- **`BROKERAGE`** (optional): Broker configuration. If omitted, `load_config()` defaults to a simulated broker with default parameters. `BROKERAGE.type` selects the active broker, and inactive broker-specific sections are ignored.
 
 ### 10.2 Allowed Timeframes
 `1Min`, `5Min`, `15Min`, `30Min`, `1H`, `2H`, `4H`, `1D`, `1W`, `1M`
@@ -476,6 +490,11 @@ SYSTEM:
 DATA:
   source: "yfinance"
   yfinance: {}
+  # live_ibkr:
+  #   host: "127.0.0.1"
+  #   port: 7497
+  #   client_id: 2
+  #   bar_resolution_sec: 1
 
 TIME_RANGE:
   start_date: "2024-01-01"
@@ -490,6 +509,18 @@ RISK:
     - name: "ConfidenceSizer"
       min_quantity: 0.0
       max_quantity: 10.0
+
+BROKERAGE:
+  type: "simulated"
+  mode: "paper"
+  sim:
+    spread_bps: 2.0
+    slippage_mean_bps: 0.5
+    slippage_std_bps: 1.0
+  # ibkr:
+  #   host: "127.0.0.1"
+  #   port: 4002
+  #   client_id: 1
 ```
 
 ## 11 Visualisation

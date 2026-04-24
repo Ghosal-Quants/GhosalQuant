@@ -22,13 +22,19 @@ SYSTEM:
 # Data Source Configuration
 # ------------------------------------------------
 DATA:
-  source: "yfinance" # Options: "polygon", "yfinance"
+  source: "yfinance" # Options: "polygon", "yfinance", "live_ibkr"
   # Only the section specified in the "source" field will be used. The other section will be ignored.
   polygon:
     api_key: "API_KEY"
     parquet_path: "src/ghosalquant/data_layer/data/main.parquet"
     base_resolution: "1Min"
   yfinance: {} # Currently no config options for yfinance, but this section may be expanded in future
+  # To switch to IBKR live market data, change `source` to `live_ibkr` and use the block below.
+  # live_ibkr:
+  #   host: "127.0.0.1"
+  #   port: 7497
+  #   client_id: 2
+  #   bar_resolution_sec: 1
 
 # ------------------------------------------------
 # Test Period and Range
@@ -45,8 +51,23 @@ TIME_RANGE:
 # ------------------------------------------------
 RISK:
   rules:
+    - name: "RegimeFilter"
+      blocked_regimes: [ "NOISE" ]
+      penalty_regimes:
+        CHOPPY: 0.6         # scale quantity by 0.6 in CHOPPY regime
+
+    - name: "CorrelationFilter"
+      lookback: 60          # bars of price history for correlation
+      threshold: 0.75       # |corr| >= threshold -> blocked
+
+    - name: "DrawdownKillSwitch"
+      reduce_threshold: -0.08   # scale positions by reduce_multiplier
+      kill_threshold: -0.15     # block ALL new BUY orders
+      reduce_multiplier: 0.5
+
     - name: "MaxOpenPositions"
       max_open_positions: 3
+
     - name: "ConfidenceSizer"
       min_quantity: 0.0
       max_quantity: 10.0
@@ -55,6 +76,21 @@ RISK:
 # Brokerage
 # ------------------------------------------------
 BROKERAGE:
-  - name: ibkr_paper
-    type: ibkr
-    ibkr: { host: "127.0.0.1", port: 4002, client_id: 1 }
+  type: simulated
+  mode: paper
+  sim:
+    spread_bps: 2.0
+    slippage_mean_bps: 0.5
+    slippage_std_bps: 1.0
+    commission_per_share: 0.0
+    partial_fill_probability: 0.0
+    reject_probability: 0.0
+    max_fill_pct_of_bar_volume: 0.25
+    impact_bps_at_full_participation: 10.0
+    min_latency_ms: 0
+    max_latency_ms: 0
+  # To switch to IBKR, change `type` to `ibkr` and use the block below.
+  # ibkr:
+  #   host: "127.0.0.1"
+  #   port: 4002
+  #   client_id: 1
