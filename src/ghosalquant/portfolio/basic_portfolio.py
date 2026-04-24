@@ -26,6 +26,7 @@ class BasicPortfolio(Portfolio):
         self._next_trade_id: int = 0 # start indexing trades from 0
         self._realised_pnl: float = 0.0
         self._equity_points: list[EquityPoint] = []
+        self._peak_equity: float = init_capital
         self._last_prices: dict[str, float] = {}
 
     async def process_fill(self, fill: Fill) -> None:
@@ -74,6 +75,9 @@ class BasicPortfolio(Portfolio):
             num_open_trades=sum(len(t) for t in self._open_trades.values()),
         )
 
+        if equity > self._peak_equity:
+            self._peak_equity = equity
+
         if self._equity_points and self._equity_points[-1].time_stamp == time_stamp:
             self._equity_points[-1] = point
         else:
@@ -96,6 +100,28 @@ class BasicPortfolio(Portfolio):
         if not self._equity_points:
             return 0.0
         return float(self._equity_points[-1].unrealised_pnl)
+
+    @property
+    def current_equity(self) -> float:
+        if not self._equity_points:
+            return self._init_capital
+        return float(self._equity_points[-1].equity)
+
+    @property
+    def peak_equity(self) -> float:
+        return float(self._peak_equity)
+
+    @property
+    def open_position_count(self) -> int:
+        return sum(len(trades) for trades in self._open_trades.values())
+
+    @property
+    def open_qty_by_symbol(self) -> dict[str, float]:
+        return {
+            symbol: sum(trade.size for trade in trades.values())
+            for symbol, trades in self._open_trades.items()
+            if trades
+        }
 
     @property
     def final_balance(self) -> float:

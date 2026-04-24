@@ -45,6 +45,22 @@ class Portfolio(Protocol):
         ...
 
     @property
+    def current_equity(self) -> float:
+        ...
+
+    @property
+    def peak_equity(self) -> float:
+        ...
+
+    @property
+    def open_position_count(self) -> int:
+        ...
+
+    @property
+    def open_qty_by_symbol(self) -> dict[str, float]:
+        ...
+
+    @property
     def total_pnl(self) -> float:
         return self.realised_pnl + self.unrealised_pnl
 
