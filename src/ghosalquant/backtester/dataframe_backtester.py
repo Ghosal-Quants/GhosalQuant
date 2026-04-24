@@ -5,6 +5,7 @@ from pandas import DataFrame
 import pandas as pd
 
 from ..backtester.backtester_base import Backtester
+from ..brokerage.builder import build_broker
 from ..core.types import Order, EquityPoint, BacktestKPMs
 from ..execution.strategy_base import Strategy
 from ..data_layer.dataframe_datasource import DataFrameDataSource
@@ -77,7 +78,6 @@ class DataFrameBacktester(Backtester):
                 close_col= close_col,
                 volume_col= volume_col
             ),
-            config= config,
             signal_destination=DataFrameSink(
                 dataframe= self._return_df,
                 timestamp_col= timestamp_col,
@@ -85,7 +85,9 @@ class DataFrameBacktester(Backtester):
                 confidence_col= confidence_col,
                 quantity_col= quantity_col
             ),
-            portfolio= self._portfolio
+            portfolio= self._portfolio,
+            broker=build_broker(config.broker),
+            config= config,
         )
 
     @property

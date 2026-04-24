@@ -39,6 +39,13 @@ class PolygonConfig:
     base_resolution: str = "1Min" # The resolution of the underlying data
 
 @dataclass(frozen=True, slots=True)
+class LiveIBKRConfig:
+    host: str = "127.0.0.1"
+    port: int = 7497
+    client_id: int = 2
+    bar_resolution_sec: int = 1
+
+@dataclass(frozen=True, slots=True)
 class LivePolygonConfig:
     api_key: str
     base_resolution: str = "1Min" # 1Sec, 1Min, ...
@@ -53,6 +60,7 @@ class DataConfig:
     source: DataSrcType
     yfinance: YFinanceConfig | None = None
     polygon: PolygonConfig | None = None
+    live_ibkr: LiveIBKRConfig | None = None
 
 @dataclass(frozen=True, slots=True)
 class TimeConfig:
@@ -67,7 +75,7 @@ class BrokerType(str, Enum):
 
 class BrokerMode(str, Enum):
     PAPER = 'paper'
-    LIVE = 'simulated'
+    LIVE = 'live'
 
 @dataclass(frozen=True, slots=True)
 class SimBrokerConfig:
@@ -77,6 +85,8 @@ class SimBrokerConfig:
     commission_per_share: float = 0.0
     partial_fill_probability: float = 0.0
     reject_probability: float = 0.0
+    max_fill_pct_of_bar_volume: float = 0.25
+    impact_bps_at_full_participation: float = 10.0
     min_latency_ms: int = 0
     max_latency_ms: int = 0
     seed: int | None = None
@@ -118,6 +128,103 @@ def _validate_tf(timeframe: str, path: str) -> str:
     if tf not in ALLOWED_TFS:
         raise ConfigError(f"{path} must be one of {sorted(ALLOWED_TFS)}. Got: {tf}")
     return tf
+
+
+def _parse_broker_type(raw: Any, path: str) -> BrokerType:
+    broker_type = _assert_str(raw, path).strip().lower()
+    if broker_type == BrokerType.SIMULATED.value:
+        return BrokerType.SIMULATED
+    if broker_type == BrokerType.IBKR.value:
+        return BrokerType.IBKR
+    raise ConfigError(
+        f"{path} must be one of {[e.value for e in BrokerType]}. Got: {broker_type}"
+    )
+
+
+def _parse_broker_mode(raw: Any, path: str) -> BrokerMode:
+    mode = _assert_str(raw, path).strip().lower()
+    if mode == BrokerMode.PAPER.value:
+        return BrokerMode.PAPER
+    if mode == BrokerMode.LIVE.value:
+        return BrokerMode.LIVE
+    if mode == "simulated":
+        return BrokerMode.PAPER
+    raise ConfigError(
+        f"{path} must be one of {[BrokerMode.PAPER.value, BrokerMode.LIVE.value]}. Got: {mode}"
+    )
+
+
+def _parse_sim_broker_config(raw: Any) -> SimBrokerConfig:
+    sim_raw = _assert_map(raw, "BROKERAGE.sim")
+    return SimBrokerConfig(
+        spread_bps=float(sim_raw.get("spread_bps", 2.0)),
+        slippage_mean_bps=float(sim_raw.get("slippage_mean_bps", 0.5)),
+        slippage_std_bps=float(sim_raw.get("slippage_std_bps", 1.0)),
+        commission_per_share=float(sim_raw.get("commission_per_share", 0.0)),
+        partial_fill_probability=float(sim_raw.get("partial_fill_probability", 0.0)),
+        reject_probability=float(sim_raw.get("reject_probability", 0.0)),
+        max_fill_pct_of_bar_volume=float(sim_raw.get("max_fill_pct_of_bar_volume", 0.25)),
+        impact_bps_at_full_participation=float(sim_raw.get("impact_bps_at_full_participation", 10.0)),
+        min_latency_ms=int(sim_raw.get("min_latency_ms", 0)),
+        max_latency_ms=int(sim_raw.get("max_latency_ms", 0)),
+        seed=None if sim_raw.get("seed") is None else int(sim_raw.get("seed")),
+    )
+
+
+def _parse_ibkr_broker_config(raw: Any) -> IBKRBrokerConfig:
+    ibkr_raw = _assert_map(raw, "BROKERAGE.ibkr")
+    return IBKRBrokerConfig(
+        host=str(ibkr_raw.get("host", "127.0.0.1")),
+        port=int(ibkr_raw.get("port", 7497)),
+        client_id=int(ibkr_raw.get("client_id", 1)),
+    )
+
+
+def _parse_live_ibkr_config(raw: Any) -> LiveIBKRConfig:
+    live_ibkr_raw = _assert_map(raw, "DATA.live_ibkr")
+    return LiveIBKRConfig(
+        host=str(live_ibkr_raw.get("host", "127.0.0.1")),
+        port=int(live_ibkr_raw.get("port", 7497)),
+        client_id=int(live_ibkr_raw.get("client_id", 2)),
+        bar_resolution_sec=int(live_ibkr_raw.get("bar_resolution_sec", 1)),
+    )
+
+
+def _default_broker_config() -> BrokerConfig:
+    return BrokerConfig(
+        type=BrokerType.SIMULATED,
+        mode=BrokerMode.PAPER,
+        sim=SimBrokerConfig(),
+    )
+
+
+def _parse_broker_config(raw: Any) -> BrokerConfig:
+    if raw is None:
+        return _default_broker_config()
+
+    if isinstance(raw, list):
+        if len(raw) == 0:
+            return _default_broker_config()
+        if len(raw) != 1:
+            raise ConfigError("BROKERAGE currently supports exactly one broker entry.")
+        raw = raw[0]
+
+    broker_raw = _assert_map(raw, "BROKERAGE")
+    broker_type = _parse_broker_type(broker_raw.get("type"), "BROKERAGE.type")
+    broker_mode = _parse_broker_mode(broker_raw.get("mode", "paper"), "BROKERAGE.mode")
+
+    if broker_type == BrokerType.SIMULATED:
+        return BrokerConfig(
+            type=broker_type,
+            mode=broker_mode,
+            sim=_parse_sim_broker_config(broker_raw.get("sim", {})),
+        )
+
+    return BrokerConfig(
+        type=broker_type,
+        mode=broker_mode,
+        ibkr=_parse_ibkr_broker_config(broker_raw.get("ibkr")),
+    )
 
 # Config loader
 def load_config(file_path: str | Path) -> Config:
@@ -167,6 +274,7 @@ def load_config(file_path: str | Path) -> Config:
 
         yfinance_cfg: YFinanceConfig | None = None
         polygon_cfg: PolygonConfig | None = None
+        live_ibkr_cfg: LiveIBKRConfig | None = None
 
         if data_source == DataSrcType.YFINANCE: # TODO: Add yfinance config options in the future if needed
             yf_raw = data_raw.get("yfinance", {}) or {}
@@ -185,11 +293,15 @@ def load_config(file_path: str | Path) -> Config:
                 parquet_path=parquet_path,
                 base_resolution=base_res,
             )
+        elif data_source == DataSrcType.LIVE_IBKR:
+            live_ibkr_raw = data_raw.get("live_ibkr", {}) or {}
+            live_ibkr_cfg = _parse_live_ibkr_config(live_ibkr_raw)
 
         data_config = DataConfig(
             source=data_source,
             yfinance=yfinance_cfg,
-            polygon=polygon_cfg
+            polygon=polygon_cfg,
+            live_ibkr=live_ibkr_cfg,
         )
 
         # ----- Time ----- #
@@ -229,7 +341,15 @@ def load_config(file_path: str | Path) -> Config:
                 )
             )
 
-        return Config(system=system_config, data=data_config, time_range=time_config, risk=RiskConfig(rules=rules))
+        broker_config = _parse_broker_config(raw.get("BROKERAGE"))
+
+        return Config(
+            system=system_config,
+            data=data_config,
+            time_range=time_config,
+            risk=RiskConfig(rules=rules),
+            broker=broker_config,
+        )
 
     except FileNotFoundError:
         raise ConfigError(f"Error: The file {file_path} was not found.")

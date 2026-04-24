@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 
-from ..core.types import Order, Fill
+from ..core.types import Bar, Order, Fill
 
 class Broker(ABC):
     # ----- Managing Connection ----- #
@@ -15,6 +15,15 @@ class Broker(ABC):
         """
         Optionally can be overridden by subclasses if connection management is needed on shutdown
         (no-op for simulation brokers)
+        """
+        return None
+
+    def on_bar(self, bar: Bar) -> None:
+        """
+        Consume the latest market bar before fills are collected.
+
+        Live brokers can ignore this hook. Simulation brokers can use it to
+        advance market time and fill orders against observed liquidity.
         """
         return None
 

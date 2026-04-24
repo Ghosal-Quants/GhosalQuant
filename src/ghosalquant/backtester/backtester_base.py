@@ -1,8 +1,8 @@
 import asyncio
-from abc import ABC, abstractmethod
 from typing import final, Iterable
 
 from ..data_layer.datasource_factory import datasource_from_config
+from ..brokerage.builder import build_broker
 from ..execution.strategy_base import Strategy
 from ..execution.execution_system import ExecutionSystem
 from ..data_layer.datasource_base import DataSource
@@ -42,7 +42,8 @@ class Backtester:
             strategy = strategy,
             signal_destination = signal_destination,
             risk_manager = risk_manager,
-            portfolio = portfolio
+            portfolio = portfolio,
+            broker = broker
         )
 
         self._portfolio = self.execution_system.portfolio
@@ -75,6 +76,7 @@ class Backtester:
                 signal_destination=signal_destination,
                 portfolio=portfolio,
                 risk_manager=risk_manager,
+                broker=build_broker(cfg.broker),
                 config=cfg
             )
 
@@ -97,12 +99,19 @@ class Backtester:
 
     @property
     def kpms(self) -> BacktestKPMs:
+        if not self._portfolio:
+            raise ValueError("Cannot produce KPMs without an initialised Portfolio")
+
         """Calculate and return key performance metrics after completing a backtest."""
         return calculate_kpms(self._portfolio)
 
     @final
     async def run_async(self) -> BacktestKPMs:
         await self.execution_system.run()
+
+        if not self._portfolio:
+            raise ValueError("Cannot produce KPMs without an initialised Portfolio")
+
         return calculate_kpms(self._portfolio)
 
     @final

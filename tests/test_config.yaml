@@ -2,13 +2,19 @@
 # General System Settings
 # ------------------------------------------------
 SYSTEM:
-  target: "AAPL"
-  # The timeframe for the main data (e.g., H1, M30, D1)
-  main_timeframe: "H1"
-  # The timeframe for execution/signal checks (e.g., M5)
-  execution_timeframe: "M5"
+  symbols: ["AAPL", "MSFT"]
+  main_timeframe: "1H"
+  execution_timeframe: "5Min"
   # Do we want fresh candles downloaded?
   fresh_candles: True
+  use_risk_manager: True
+
+# ------------------------------------------------
+# Data Source Configuration
+# ------------------------------------------------
+DATA:
+  source: "yfinance"
+  yfinance: {}
 
 # ------------------------------------------------
 # Test Period and Range
@@ -19,3 +25,27 @@ TIME_RANGE:
   # Time window for daily trading (e.g., 9:00 to 17:00 UTC)
   session_start_time: "09:00"
   session_end_time: "17:00"
+
+# ------------------------------------------------
+# Risk Manager
+# ------------------------------------------------
+RISK:
+  rules:
+    - name: "MaxOpenPositions"
+      max_open_positions: 3
+    - name: "ConfidenceSizer"
+      min_quantity: 0.0
+      max_quantity: 10.0
+
+# ------------------------------------------------
+# Brokerage
+# ------------------------------------------------
+BROKERAGE:
+  - name: sim_default
+    type: simulated
+    mode: paper
+    sim:
+      spread_bps: 3.0
+      slippage_mean_bps: 1.5
+      slippage_std_bps: 0.5
+      commission_per_share: 0.01
