@@ -111,6 +111,9 @@ class BasicPortfolio(Portfolio):
     def peak_equity(self) -> float:
         return float(self._peak_equity)
 
+    def reset_peak_equity(self) -> None:
+        self._peak_equity = self.current_equity
+
     @property
     def open_position_count(self) -> int:
         return sum(len(trades) for trades in self._open_trades.values())

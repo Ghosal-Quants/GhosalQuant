@@ -52,6 +52,9 @@ class Portfolio(Protocol):
     def peak_equity(self) -> float:
         ...
 
+    def reset_peak_equity(self) -> None:
+        ...
+
     @property
     def open_position_count(self) -> int:
         ...
