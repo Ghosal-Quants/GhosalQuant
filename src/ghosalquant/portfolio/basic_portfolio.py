@@ -102,6 +102,10 @@ class BasicPortfolio(Portfolio):
         return float(self._equity_points[-1].unrealised_pnl)
 
     @property
+    def cash_balance(self) -> float:
+        return float(self._cash)
+
+    @property
     def current_equity(self) -> float:
         if not self._equity_points:
             return self._init_capital

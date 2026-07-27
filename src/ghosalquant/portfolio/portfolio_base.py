@@ -45,6 +45,10 @@ class Portfolio(Protocol):
         ...
 
     @property
+    def cash_balance(self) -> float:
+        ...
+
+    @property
     def current_equity(self) -> float:
         ...
 
