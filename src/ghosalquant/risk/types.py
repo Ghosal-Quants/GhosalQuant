@@ -21,6 +21,7 @@ class OrderDraft:
 class RiskContext:
     open_positions: int = 0 # Current open positions
     open_qty_by_symbol: dict[str, float] = field(default_factory=dict)
+    position_cost_by_symbol: dict[str, float] = field(default_factory=dict)
     current_drawdown: float | None = None  # -0.05 means 5% below peak
     peak_equity: float | None = None
     price_history: dict[str, list[float]] | None = None # recent close prices per symbol

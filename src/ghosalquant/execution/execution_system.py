@@ -104,12 +104,25 @@ class ExecutionSystem:
     def _build_risk_context(self) -> RiskContext:
         open_positions = 0
         open_qty_by_symbol: dict[str, float] = {}
+        position_cost_by_symbol: dict[str, float] = {}
         peak_equity: float | None = None
         current_drawdown: float | None = None
 
         if self.portfolio is not None:
             open_positions = int(self.portfolio.open_position_count)
             open_qty_by_symbol = dict(self.portfolio.open_qty_by_symbol)
+            position_cost_by_symbol = {
+                symbol: sum(
+                    float(trade.entry_price) * float(trade.size)
+                    for trade in trades.values()
+                )
+                for symbol, trades in getattr(
+                    self.portfolio,
+                    "_open_trades",
+                    {},
+                ).items()
+                if trades
+            }
             peak_equity = float(self.portfolio.peak_equity)
             current_equity = float(self.portfolio.current_equity)
 
@@ -119,6 +132,7 @@ class ExecutionSystem:
         return RiskContext(
             open_positions=open_positions,
             open_qty_by_symbol=open_qty_by_symbol,
+            position_cost_by_symbol=position_cost_by_symbol,
             current_drawdown=current_drawdown,
             peak_equity=peak_equity,
             price_history=(

@@ -30,6 +30,9 @@ class BasicPortfolio(Portfolio):
         self._last_prices: dict[str, float] = {}
 
     async def process_fill(self, fill: Fill) -> None:
+        # A new lot must be marked from the fill that created it, not from a
+        # stale price cached before the execution.
+        self._last_prices[fill.symbol] = float(fill.price)
         if fill.side == SignalType.BUY:
             self._open(fill)
         elif fill.side == SignalType.SELL:
