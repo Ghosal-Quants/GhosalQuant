@@ -28,8 +28,13 @@ class BasicPortfolio(Portfolio):
         self._equity_points: list[EquityPoint] = []
         self._peak_equity: float = init_capital
         self._last_prices: dict[str, float] = {}
+        self._accounting_version: int = 0
+        self._open_cost_by_symbol: dict[str, float] = {}
+        self._open_qty_by_symbol: dict[str, float] = {}
 
     async def process_fill(self, fill: Fill) -> None:
+        cash_before = self._cash
+        quantity_before = self.open_qty_by_symbol.get(fill.symbol, 0.0)
         # A new lot must be marked from the fill that created it, not from a
         # stale price cached before the execution.
         self._last_prices[fill.symbol] = float(fill.price)
@@ -40,6 +45,12 @@ class BasicPortfolio(Portfolio):
         else:
             raise ValueError(f"Unsupported fill side: {fill.side}")
 
+        quantity_after = self.open_qty_by_symbol.get(fill.symbol, 0.0)
+        if (
+            abs(self._cash - cash_before) > 1e-12
+            or abs(quantity_after - quantity_before) > 1e-12
+        ):
+            self._accounting_version += 1
         self.snapshot_equity(
             time_stamp=fill.time_stamp,
             prices=self._last_prices
@@ -56,17 +67,16 @@ class BasicPortfolio(Portfolio):
         positions_value: float = 0.0
         unrealised_pnl: float = 0.0
 
-        for symbol, trades in self._open_trades.items():
-            if not trades:
-                continue
-
+        for symbol, quantity in self._open_qty_by_symbol.items():
             if symbol not in prices:
                 raise KeyError(f"Price for symbol {symbol} not provided in prices dict.")
 
             current_price: float = float(prices[symbol])
-            for trade in trades.values():
-                positions_value += trade.size * current_price
-                unrealised_pnl += trade.unrealised_pnl(current_price)
+            positions_value += quantity * current_price
+            unrealised_pnl += (
+                quantity * current_price
+                - self._open_cost_by_symbol.get(symbol, 0.0)
+            )
 
         equity = self._cash + positions_value
 
@@ -127,11 +137,7 @@ class BasicPortfolio(Portfolio):
 
     @property
     def open_qty_by_symbol(self) -> dict[str, float]:
-        return {
-            symbol: sum(trade.size for trade in trades.values())
-            for symbol, trades in self._open_trades.items()
-            if trades
-        }
+        return dict(self._open_qty_by_symbol)
 
     @property
     def final_balance(self) -> float:
@@ -142,6 +148,18 @@ class BasicPortfolio(Portfolio):
     @property
     def fees_paid(self) -> float:
         return self._fees_paid
+
+    @property
+    def accounting_version(self) -> int:
+        return self._accounting_version
+
+    @property
+    def last_prices(self) -> dict[str, float]:
+        return dict(self._last_prices)
+
+    @property
+    def open_cost_by_symbol(self) -> dict[str, float]:
+        return dict(self._open_cost_by_symbol)
 
     # Helpers -------
 
@@ -169,6 +187,13 @@ class BasicPortfolio(Portfolio):
             open_time=fill.time_stamp,
         )
         self._open_trades.setdefault(fill.symbol, {})[trade_id] = trade
+        self._open_qty_by_symbol[fill.symbol] = (
+            self._open_qty_by_symbol.get(fill.symbol, 0.0)
+            + float(fill.quantity)
+        )
+        self._open_cost_by_symbol[fill.symbol] = (
+            self._open_cost_by_symbol.get(fill.symbol, 0.0) + notional
+        )
 
     def _close(self, fill: Fill) -> None:
         symbol: str = fill.symbol
@@ -190,6 +215,16 @@ class BasicPortfolio(Portfolio):
 
             # Amount we are closing form this trade
             qty_to_close: float = min(trade.size, close_qty)
+            self._open_qty_by_symbol[symbol] = max(
+                0.0,
+                self._open_qty_by_symbol.get(symbol, 0.0)
+                - qty_to_close,
+            )
+            self._open_cost_by_symbol[symbol] = max(
+                0.0,
+                self._open_cost_by_symbol.get(symbol, 0.0)
+                - trade.entry_price * qty_to_close,
+            )
 
             leg_commission = commission * (qty_to_close / fill.quantity)
 
@@ -223,3 +258,7 @@ class BasicPortfolio(Portfolio):
 
                 trade.size -= qty_to_close
                 close_qty -= qty_to_close
+
+        if not trades:
+            self._open_qty_by_symbol.pop(symbol, None)
+            self._open_cost_by_symbol.pop(symbol, None)
