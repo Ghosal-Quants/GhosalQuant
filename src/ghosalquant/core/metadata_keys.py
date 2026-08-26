@@ -1,0 +1,49 @@
+"""
+The metadata contract shared by strategies, risk rules, and brokers.
+
+``Signal.metadata`` and ``Order.metadata`` are free-form dicts. These constants name the keys the
+framework itself reads or writes so that a strategy, a risk rule, and a broker agree on them.
+Application code may add its own keys alongside these.
+
+Set by strategies on a Signal (copied onto the Order by RiskManager):
+``LIMIT_PRICE`` and ``LIQUIDITY`` predate the first-class fields of the same name and are still
+honoured; ``ORDER_SLOT`` is a stable name a strategy uses to find its own resting order;
+``MAX_QUANTITY`` is the strategy's own size cap; ``MAX_ORDER_AGE_SECONDS`` lets a broker expire
+the order; ``REPLACE_ENTRY_ORDERS`` / ``REPLACE_EXIT_ORDERS`` ask for the symbol's resting
+entries / exits to be cancelled first; ``CANCEL_REMAINDER_AFTER_FIRST_FILL`` gives a limit
+IOC-like behaviour.
+
+Written by the framework: ``CONFIDENCE`` (RiskManager copies ``Signal.confidence``),
+``IDEMPOTENCY_KEY`` (live brokers stamp it before submission).
+"""
+
+LIMIT_PRICE = "limit_price"
+LIQUIDITY = "liquidity"
+REASON = "reason"
+ORDER_SLOT = "order_slot"
+MAX_QUANTITY = "max_quantity"
+MAX_ORDER_AGE_SECONDS = "max_order_age_seconds"
+REPLACE_ENTRY_ORDERS = "replace_entry_orders"
+REPLACE_EXIT_ORDERS = "replace_exit_orders"
+CANCEL_REMAINDER_AFTER_FIRST_FILL = "cancel_remainder_after_first_fill"
+
+CONFIDENCE = "confidence"
+IDEMPOTENCY_KEY = "idempotency_key"
+STOP_LOSS = "stop_loss"
+TAKE_PROFIT = "take_profit"
+
+__all__ = [
+    "LIMIT_PRICE",
+    "LIQUIDITY",
+    "REASON",
+    "ORDER_SLOT",
+    "MAX_QUANTITY",
+    "MAX_ORDER_AGE_SECONDS",
+    "REPLACE_ENTRY_ORDERS",
+    "REPLACE_EXIT_ORDERS",
+    "CANCEL_REMAINDER_AFTER_FIRST_FILL",
+    "CONFIDENCE",
+    "IDEMPOTENCY_KEY",
+    "STOP_LOSS",
+    "TAKE_PROFIT",
+]
