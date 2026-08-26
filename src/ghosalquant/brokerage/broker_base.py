@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 
-from ..core.types import Bar, Order, Fill
+from ..core.types import Bar, Fill, MarketEvent, Order, OrderBook, PublicTrade
 
 class Broker(ABC):
     # ----- Managing Connection ----- #
@@ -18,6 +18,7 @@ class Broker(ABC):
         """
         return None
 
+    # ----- Market data ----- #
     def on_bar(self, bar: Bar) -> None:
         """
         Consume the latest market bar before fills are collected.
@@ -26,6 +27,33 @@ class Broker(ABC):
         advance market time and fill orders against observed liquidity.
         """
         return None
+
+    def on_order_book(self, book: OrderBook) -> OrderBook:
+        """
+        Consume the latest order book before fills are collected.
+
+        Returns the book the strategy should see. The default returns it unchanged; a simulation
+        broker may return a copy adjusted for the strategy's own resting orders or consumed depth.
+        The portfolio is always marked from the raw book, never from this return value.
+        """
+        return book
+
+    def on_public_trade(self, trade: PublicTrade) -> None:
+        """Consume a public print before fills are collected. Live brokers can ignore this hook."""
+        return None
+
+    def on_market_event(self, event: MarketEvent) -> MarketEvent:
+        """Route a market event to the matching hook and return what the strategy should see."""
+        match event:
+            case Bar():
+                self.on_bar(event)
+                return event
+            case OrderBook():
+                return self.on_order_book(event)
+            case PublicTrade():
+                self.on_public_trade(event)
+                return event
+        raise TypeError(f"Unsupported market event: {type(event).__name__}")
 
     # ----- Execution ----- #
     @abstractmethod

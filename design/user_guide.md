@@ -188,10 +188,74 @@ execution_system = ExecutionSystem(
 asyncio.run(execution_system.run())
 ```
 
+## Writing an Order-Book Strategy
+A data source may yield `OrderBook` and `PublicTrade` events as well as `Bar`s, and the same `ExecutionSystem` routes
+each to the matching hook. Subclass `OrderBookStrategy` (bars are ignored, `on_order_book` is mandatory) and use the
+`StrategyContext` you are handed to see your own position and resting orders for that symbol:
+
+```python
+from ghosalquant import OrderBookStrategy
+from ghosalquant.core import metadata_keys
+from ghosalquant.core.types import Fill, OrderBook, Signal, SignalType
+from ghosalquant.execution.context import StrategyContext
+
+
+class JoinTheBid(OrderBookStrategy):
+    def on_start(self): ...
+    def on_end(self): ...
+
+    def on_order_book(self, book: OrderBook, context: StrategyContext):
+        if not book.is_two_sided():
+            return None
+        if context.position_quantity == 0.0 and not context.has_open_orders:
+            price = book.best_bid.price                       # rest at the bid (a maker order)
+            return Signal(
+                time_stamp=book.time_stamp, symbol=book.symbol, signal_type=SignalType.BUY,
+                ref_price=price, quantity=10.0,
+                metadata={metadata_keys.LIMIT_PRICE: price},  # the price the broker should use
+            )
+        if context.position_quantity > 0.0 and context.open_sell_quantity == 0.0:
+            price = round(context.average_entry_price + 0.02, 2)
+            return [Signal(                                   # a hook may return several signals
+                time_stamp=book.time_stamp, symbol=book.symbol, signal_type=SignalType.SELL,
+                ref_price=price, quantity=context.position_quantity,
+                metadata={metadata_keys.LIMIT_PRICE: price},
+            )]
+        return None
+
+    def on_fill(self, fill: Fill) -> None:                    # optional lifecycle hooks
+        print("filled", fill)
+```
+
+Feed it books (and prints, if you have them) through any `DataSource`; `merge_datasources` combines several
+streams into one time-ordered stream:
+
+```python
+from datetime import timedelta
+from ghosalquant.data_layer import ListDataSource, merge_datasources
+from ghosalquant.portfolio import BasicPortfolio, MarkPolicy
+
+execution_system = ExecutionSystem(
+    strategy=JoinTheBid(),
+    data_src=merge_datasources(ListDataSource(books), ListDataSource(prints)),
+    risk_manager=RiskManager(),
+    portfolio=BasicPortfolio(),
+    broker=SimBroker(),
+    mark_policy=MarkPolicy.MID,               # or CONSERVATIVE: bid for longs, prints never raise a mark
+    snapshot_interval=timedelta(seconds=1),   # equity points at most this often between bars and fills
+)
+asyncio.run(execution_system.run())
+```
+
+`SimBroker` fills an order against a book when the touch reaches its price, for up to the displayed quantity at
+that level. A full example with synthetic books is in `examples/example_order_book_strategy.py`.
+
 ## Quick Reference
 
 | What you want | What to use |
 |---|---|
+| Trade order books / prints | `OrderBookStrategy` + `on_order_book(book, context)` |
+| Combine several data streams | `merge_datasources(...)` |
 | Backtest with a DataFrame | `DataFrameBacktester` |
 | Backtest from config (auto data) | `Backtester.from_config()` |
 | Live / paper trading | `ExecutionSystem` + `IBKRBroker` |

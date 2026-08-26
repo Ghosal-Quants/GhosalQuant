@@ -1,0 +1,606 @@
+import asyncio
+from datetime import datetime, timedelta
+
+import pytest
+
+from ghosalquant.brokerage.open_orders import OpenOrderQueries
+from ghosalquant.brokerage.simulated import SimBroker
+from ghosalquant.core import metadata_keys
+from ghosalquant.core.types import (
+    Bar,
+    BookLevel,
+    Fill,
+    Order,
+    OrderBook,
+    PublicTrade,
+    Signal,
+    SignalType,
+)
+from ghosalquant.data_layer.list_datasource import ListDataSource
+from ghosalquant.data_layer.merge import merge_datasources
+from ghosalquant.execution.context import StrategyContext
+from ghosalquant.execution.execution_system import ExecutionSystem
+from ghosalquant.execution.strategy_base import OrderBookStrategy, Strategy, as_signal_list
+from ghosalquant.portfolio.basic_portfolio import BasicPortfolio
+from ghosalquant.portfolio.marks import MarkPolicy, mark_from_book, mark_from_trade
+from ghosalquant.risk.risk_manager import RiskManager
+from ghosalquant.risk.types import OrderDraft, RiskContext
+
+
+# ----- Helpers ----- #
+
+T0 = datetime(2025, 11, 15, 9, 30, 0)
+
+
+def _at(seconds: float) -> datetime:
+    return T0 + timedelta(seconds=seconds)
+
+
+def _book(seconds: float, bids, asks, symbol: str = "TEST") -> OrderBook:
+    return OrderBook(
+        time_stamp=_at(seconds),
+        symbol=symbol,
+        bids=tuple(BookLevel(p, q) for p, q in bids),
+        asks=tuple(BookLevel(p, q) for p, q in asks),
+    )
+
+
+def _trade(seconds: float, price: float, quantity: float = 1.0, symbol: str = "TEST") -> PublicTrade:
+    return PublicTrade(time_stamp=_at(seconds), symbol=symbol, price=price, quantity=quantity)
+
+
+def _bar(seconds: float, close: float, symbol: str = "TEST") -> Bar:
+    return Bar(time_stamp=_at(seconds), symbol=symbol, open=close, high=close, low=close, close=close, volume=1000.0)
+
+
+def _sim_broker(**overrides) -> SimBroker:
+    settings = dict(
+        spread_bps=0.0,
+        slippage_mean_bps=0.0,
+        slippage_std_bps=0.0,
+        impact_bps_at_full_participation=0.0,
+        max_fill_pct_of_bar_volume=1.0,
+        seed=3,
+    )
+    settings.update(overrides)
+    return SimBroker(**settings)
+
+
+class PassThroughRule:
+    """Risk rule that keeps the draft and records every context it sees."""
+
+    def __init__(self) -> None:
+        self.contexts: list[RiskContext] = []
+
+    def apply(self, _draft: OrderDraft, context: RiskContext) -> bool:
+        self.contexts.append(context)
+        return True
+
+
+class TouchStrategy(OrderBookStrategy):
+    """
+    Flat with nothing resting: buy 5 at the best ask (a taker).
+    Long with no resting sell: offer the whole position at the best bid.
+    Records everything the loop hands it.
+    """
+
+    def __init__(self, quantity: float = 5.0) -> None:
+        super().__init__()
+        self.quantity = quantity
+        self.books: list[OrderBook] = []
+        self.contexts: list[StrategyContext] = []
+        self.trades: list[PublicTrade] = []
+        self.fills: list[Fill] = []
+        self.accepted: list[tuple[Order, str | None]] = []
+        self.started = False
+        self.ended = False
+
+    def on_start(self) -> None:
+        self.started = True
+
+    def on_end(self) -> None:
+        self.ended = True
+
+    def on_order_book(self, book: OrderBook, context: StrategyContext):
+        self.books.append(book)
+        self.contexts.append(context)
+        if context.position_quantity == 0.0 and not context.has_open_orders and book.best_ask is not None:
+            return Signal(
+                time_stamp=book.time_stamp,
+                symbol=book.symbol,
+                signal_type=SignalType.BUY,
+                ref_price=book.best_ask.price,
+                quantity=self.quantity,
+                metadata={metadata_keys.LIMIT_PRICE: book.best_ask.price},
+            )
+        if context.position_quantity > 0.0 and context.open_sell_quantity == 0.0 and book.best_bid is not None:
+            return [
+                Signal(
+                    time_stamp=book.time_stamp,
+                    symbol=book.symbol,
+                    signal_type=SignalType.SELL,
+                    ref_price=book.best_bid.price,
+                    quantity=context.position_quantity,
+                    metadata={metadata_keys.LIMIT_PRICE: book.best_bid.price},
+                )
+            ]
+        return None
+
+    def on_public_trade(self, trade: PublicTrade, context: StrategyContext):
+        self.trades.append(trade)
+        return None
+
+    def on_fill(self, fill: Fill) -> None:
+        self.fills.append(fill)
+
+    def on_order_accepted(self, order: Order, broker_order_id: str | None) -> None:
+        self.accepted.append((order, broker_order_id))
+
+
+class BarOnlyStrategy(Strategy):
+    """A plain bar strategy: must be unaffected by books and prints in the stream."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.bars: list[Bar] = []
+
+    def on_start(self) -> None:
+        return None
+
+    def on_end(self) -> None:
+        return None
+
+    def on_market_data(self, bar: Bar):
+        self.bars.append(bar)
+        return None
+
+
+class RecordingPortfolio(BasicPortfolio):
+    """BasicPortfolio that records every mark() the loop makes."""
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.marks: list[tuple[datetime, str, float]] = []
+
+    def mark(self, symbol: str, price: float, time_stamp: datetime) -> None:
+        self.marks.append((time_stamp, symbol, float(price)))
+        super().mark(symbol, price, time_stamp)
+
+
+def _run(execution: ExecutionSystem) -> None:
+    asyncio.run(execution.run())
+
+
+# ----- Hook plumbing ----- #
+
+def test_as_signal_list_normalises_hook_results():
+    signal = Signal(time_stamp=T0, symbol="TEST", signal_type=SignalType.BUY, ref_price=1.0)
+    assert as_signal_list(None) == []
+    assert as_signal_list(signal) == [signal]
+    assert as_signal_list([signal, signal]) == [signal, signal]
+    assert as_signal_list(iter((signal,))) == [signal]
+    with pytest.raises(TypeError):
+        as_signal_list(["not a signal"])
+
+
+def test_order_book_strategy_ignores_bars_and_requires_on_order_book():
+    with pytest.raises(TypeError):
+        class Incomplete(OrderBookStrategy):  # noqa: F811 - deliberately abstract
+            def on_start(self): ...
+            def on_end(self): ...
+        Incomplete()
+
+    strategy = TouchStrategy()
+    assert strategy.on_market_data(_bar(0, 100.0)) is None
+
+
+def test_sim_broker_implements_open_order_queries():
+    broker = _sim_broker()
+    assert isinstance(broker, OpenOrderQueries)
+
+    broker.on_order_book(_book(0, [(100.0, 10)], [(100.5, 10)]))
+    order_id = broker.submit(
+        Order(time_stamp=_at(0), symbol="TEST", side=SignalType.BUY, quantity=4.0, ref_price=99.0,
+              metadata={metadata_keys.LIMIT_PRICE: 99.0})
+    )
+    views = broker.open_order_views("TEST")
+    assert len(views) == 1
+    assert views[0].broker_order_id == order_id
+    assert views[0].remaining_quantity == 4.0
+    assert views[0].limit_price == 99.0
+    assert broker.open_order_views("OTHER") == ()
+
+    assert broker.cancel_open_orders("TEST", SignalType.SELL) == 0
+    assert broker.cancel_open_orders("TEST") == 1
+    assert broker.open_order_views() == ()
+
+
+# ----- SimBroker touch-crossing fill ----- #
+
+def test_sim_broker_touch_fill_caps_at_displayed_quantity_and_honours_limit():
+    broker = _sim_broker()
+    broker.on_order_book(_book(0, [(100.0, 10)], [(100.5, 10)]))
+    broker.submit(
+        Order(time_stamp=_at(0), symbol="TEST", side=SignalType.BUY, quantity=5.0, ref_price=100.5,
+              metadata={metadata_keys.LIMIT_PRICE: 100.5})
+    )
+    assert broker.get_fills() == []
+
+    # ask above the limit: rests
+    broker.on_order_book(_book(1, [(100.0, 10)], [(100.6, 10)]))
+    assert broker.get_fills() == []
+
+    # ask at the limit, 2 displayed: partial
+    broker.on_order_book(_book(2, [(100.0, 10)], [(100.5, 2)]))
+    fills = broker.get_fills()
+    assert len(fills) == 1
+    assert fills[0].quantity == 2.0
+    assert fills[0].price == 100.5
+    assert fills[0].time_stamp == _at(2)
+    assert broker.open_order_views("TEST")[0].remaining_quantity == 3.0
+
+    # no ask: rests
+    broker.on_order_book(_book(3, [(100.0, 10)], []))
+    assert broker.get_fills() == []
+
+    # ask through the limit: remainder fills at the touch
+    broker.on_order_book(_book(4, [(100.0, 10)], [(100.4, 10)]))
+    fills = broker.get_fills()
+    assert len(fills) == 1
+    assert fills[0].quantity == 3.0
+    assert fills[0].price == 100.4
+    assert broker.open_order_views("TEST") == ()
+
+
+def test_sim_broker_market_order_crosses_the_touch_and_respects_latency():
+    broker = _sim_broker(min_latency_ms=1500, max_latency_ms=1500)
+    broker.on_order_book(_book(0, [(100.0, 10)], [(100.5, 10)]))
+    broker.submit(Order(time_stamp=_at(0), symbol="TEST", side=SignalType.SELL, quantity=1.0, ref_price=100.0))
+
+    broker.on_order_book(_book(1, [(100.1, 10)], [(100.5, 10)]))
+    assert broker.get_fills() == []
+
+    broker.on_order_book(_book(2, [(100.2, 10)], [(100.5, 10)]))
+    fills = broker.get_fills()
+    assert len(fills) == 1
+    assert fills[0].side is SignalType.SELL
+    assert fills[0].price == 100.2
+
+
+def test_sim_broker_public_trade_advances_market_time_without_filling():
+    broker = _sim_broker()
+    broker.on_public_trade(_trade(0, 100.0))
+    broker.submit(Order(time_stamp=_at(0), symbol="TEST", side=SignalType.BUY, quantity=1.0, ref_price=100.0))
+    broker.on_public_trade(_trade(1, 99.0))
+    assert broker.get_fills() == []
+    assert broker.open_order_views("TEST")[0].submitted_at == _at(0)
+
+
+# ----- Marks ----- #
+
+def test_mark_policies():
+    two_sided = _book(0, [(100.0, 1)], [(101.0, 1)])
+    bid_only = _book(0, [(100.0, 1)], [])
+
+    assert mark_from_book(two_sided, previous_mark=None, position_quantity=0.0) == 100.5
+    assert mark_from_book(bid_only, previous_mark=99.0, position_quantity=5.0) == 99.0
+    assert mark_from_book(bid_only, previous_mark=None, position_quantity=5.0) is None
+    assert mark_from_book(two_sided, previous_mark=None, position_quantity=5.0, policy=MarkPolicy.CONSERVATIVE) == 100.0
+    assert mark_from_book(two_sided, previous_mark=None, position_quantity=-5.0, policy=MarkPolicy.CONSERVATIVE) == 101.0
+    assert mark_from_book(two_sided, previous_mark=None, position_quantity=0.0, policy=MarkPolicy.CONSERVATIVE) == 100.5
+
+    print_ = _trade(0, 102.0)
+    assert mark_from_trade(print_, previous_mark=100.0, position_quantity=5.0) == 102.0
+    assert mark_from_trade(print_, previous_mark=100.0, position_quantity=5.0, policy=MarkPolicy.CONSERVATIVE) == 100.0
+    assert mark_from_trade(_trade(0, 98.0), previous_mark=100.0, position_quantity=5.0, policy=MarkPolicy.CONSERVATIVE) == 98.0
+    assert mark_from_trade(print_, previous_mark=None, position_quantity=5.0, policy=MarkPolicy.CONSERVATIVE) == 102.0
+
+
+def test_basic_portfolio_mark_does_not_snapshot_but_update_equity_does():
+    portfolio = BasicPortfolio(init_capital=1_000.0)
+    portfolio.mark("TEST", 10.0, T0)
+    assert portfolio.last_prices == {"TEST": 10.0}
+    assert list(portfolio.equity_curve) == []
+    assert portfolio.average_entry_price("TEST") is None
+
+    portfolio.update_equity(_bar(1, 11.0))
+    assert len(list(portfolio.equity_curve)) == 1
+
+
+# ----- Merge ----- #
+
+def test_merge_orders_by_time_then_trade_book_bar():
+    bar = _bar(0, 100.0)
+    book = _book(0, [(100.0, 1)], [(100.5, 1)])
+    trade = _trade(0, 100.2)
+    later_book = _book(1, [(100.1, 1)], [(100.6, 1)])
+    earlier_trade = _trade(-1, 99.0)
+
+    merged = merge_datasources(
+        ListDataSource([bar, later_book]),
+        ListDataSource([book]),
+        ListDataSource([earlier_trade, trade]),
+    )
+
+    async def collect():
+        return [event async for event in merged]
+
+    events = asyncio.run(collect())
+    assert events == [earlier_trade, trade, book, bar, later_book]
+
+
+def test_merge_of_one_source_is_that_source():
+    source = ListDataSource([_bar(0, 1.0)])
+    assert merge_datasources(source) is source
+    with pytest.raises(ValueError):
+        merge_datasources()
+
+
+def test_list_datasource_accepts_bars_keyword_for_compatibility():
+    bars = [_bar(0, 1.0)]
+    assert ListDataSource(bars=bars).events is bars
+    with pytest.raises(ValueError):
+        ListDataSource(bars, bars=bars)
+
+
+# ----- The loop ----- #
+
+def _touch_scenario():
+    """
+    t0 flat -> BUY 5 @ 100.5; t1 fills 2 -> SELL 2 @ 100.2 while the BUY remainder rests;
+    t2 one-sided book, nothing fills; t3 SELL fills @ 100.3, BUY rests (ask above limit);
+    t4 BUY remainder fills @ 100.5 -> SELL 3 @ 100.4. A print at t2.5 marks in between.
+    """
+    books = [
+        _book(0, [(100.0, 10)], [(100.5, 3)]),
+        _book(1, [(100.2, 10)], [(100.5, 2)]),
+        _book(2, [(100.1, 1)], []),
+        _book(3, [(100.3, 10)], [(100.6, 10)]),
+        _book(4, [(100.4, 10)], [(100.5, 10)]),
+    ]
+    prints = [_trade(2.5, 100.15)]
+    return books, prints
+
+
+def test_order_book_strategy_round_trip_through_execution_system():
+    books, prints = _touch_scenario()
+    strategy = TouchStrategy()
+    rule = PassThroughRule()
+    broker = _sim_broker()
+    portfolio = RecordingPortfolio(init_capital=10_000.0)
+
+    execution = ExecutionSystem(
+        data_src=merge_datasources(ListDataSource(books), ListDataSource(prints)),
+        strategy=strategy,
+        risk_manager=RiskManager(rules=[rule]),
+        portfolio=portfolio,
+        broker=broker,
+    )
+    _run(execution)
+
+    assert strategy.started and strategy.ended
+    assert len(strategy.books) == 5
+    assert len(strategy.trades) == 1
+
+    assert [(f.side, f.quantity, f.price) for f in strategy.fills] == [
+        (SignalType.BUY, 2.0, 100.5),
+        (SignalType.SELL, 2.0, 100.3),
+        (SignalType.BUY, 3.0, 100.5),
+    ]
+
+    assert [order.side for order, _ in strategy.accepted] == [SignalType.BUY, SignalType.SELL, SignalType.SELL]
+    assert all(broker_id and broker_id.startswith("SIM-") for _, broker_id in strategy.accepted)
+
+    first, second, third, fourth, fifth = strategy.contexts
+    assert first.position_quantity == 0.0 and not first.has_open_orders
+    assert second.position_quantity == 2.0
+    assert second.average_entry_price == pytest.approx(100.5)
+    assert second.open_buy_quantity == 3.0 and second.open_sell_quantity == 0.0
+    assert third.open_buy_quantity == 3.0 and third.open_sell_quantity == 2.0
+    assert third.open_quantity_at(100.2, SignalType.SELL) == 2.0
+    assert fourth.position_quantity == 0.0 and fourth.open_buy_quantity == 3.0
+    assert fifth.position_quantity == 3.0 and fifth.open_sell_quantity == 0.0
+
+    sell_evaluation = rule.contexts[1]
+    assert [view.side for view in sell_evaluation.open_orders] == [SignalType.BUY]
+    assert sell_evaluation.open_orders[0].remaining_quantity == 3.0
+    assert sell_evaluation.price_history is None
+
+    # mids, except the one-sided book at t2 (no mark) and the print at t2.5
+    assert [(ts, price) for ts, _, price in portfolio.marks] == [
+        (_at(0), pytest.approx(100.25)),
+        (_at(1), pytest.approx(100.35)),
+        (_at(2.5), pytest.approx(100.15)),
+        (_at(3), pytest.approx(100.45)),
+        (_at(4), pytest.approx(100.45)),
+    ]
+    assert portfolio.open_qty_by_symbol == {"TEST": 3.0}
+    assert portfolio.last_prices["TEST"] == 100.5  # BasicPortfolio re-marks a new lot at its fill price
+    assert broker.open_order_views("TEST")[0].side is SignalType.SELL
+
+
+def test_portfolio_is_marked_from_the_raw_book_not_the_brokers_adjusted_view():
+    class ShiftingBroker(SimBroker):
+        def on_order_book(self, book: OrderBook) -> OrderBook:
+            super().on_order_book(book)
+            return book.replace(
+                bids=tuple(BookLevel(level.price - 5.0, level.quantity) for level in book.bids),
+                asks=tuple(BookLevel(level.price - 5.0, level.quantity) for level in book.asks),
+            )
+
+    strategy = TouchStrategy()
+    portfolio = BasicPortfolio(init_capital=10_000.0)
+    execution = ExecutionSystem(
+        data_src=ListDataSource([_book(0, [(100.0, 1)], [(101.0, 1)])]),
+        strategy=strategy,
+        risk_manager=RiskManager(rules=[PassThroughRule()]),
+        portfolio=portfolio,
+        broker=ShiftingBroker(seed=1),
+    )
+    _run(execution)
+
+    assert strategy.books[0].mid_price == pytest.approx(95.5)
+    assert portfolio.last_prices["TEST"] == pytest.approx(100.5)
+
+
+def test_one_sided_book_keeps_previous_mark_and_conservative_policy_marks_at_bid():
+    strategy = TouchStrategy()
+    portfolio = BasicPortfolio(init_capital=10_000.0)
+    execution = ExecutionSystem(
+        # Long 5 after t1; the SELL @ 100.0 rests below t2's bid, so the mark is t2's bid and
+        # neither the ask-only book nor the higher print moves it.
+        data_src=ListDataSource([
+            _book(0, [(100.0, 10)], [(100.5, 10)]),
+            _book(1, [(100.0, 10)], [(100.5, 10)]),
+            _book(2, [(99.9, 10)], [(100.4, 10)]),
+            _book(3, [], [(100.4, 10)]),
+            _trade(4, 103.0),
+        ]),
+        strategy=strategy,
+        risk_manager=RiskManager(rules=[PassThroughRule()]),
+        portfolio=portfolio,
+        broker=_sim_broker(),
+        mark_policy=MarkPolicy.CONSERVATIVE,
+    )
+    _run(execution)
+
+    assert portfolio.open_qty_by_symbol == {"TEST": 5.0}
+    assert portfolio.last_prices["TEST"] == pytest.approx(99.9)
+
+
+def test_bar_strategy_is_unaffected_by_books_and_prints_in_the_stream():
+    strategy = BarOnlyStrategy()
+    portfolio = BasicPortfolio(init_capital=1_000.0)
+    execution = ExecutionSystem(
+        data_src=ListDataSource([
+            _book(0, [(100.0, 1)], [(100.5, 1)]),
+            _bar(1, 100.0),
+            _trade(2, 100.2),
+            _bar(3, 101.0),
+        ]),
+        strategy=strategy,
+        risk_manager=RiskManager(rules=[PassThroughRule()]),
+        portfolio=portfolio,
+        broker=_sim_broker(),
+    )
+    _run(execution)
+
+    assert [bar.close for bar in strategy.bars] == [100.0, 101.0]
+    assert portfolio.last_prices["TEST"] == 101.0
+
+
+def test_duck_typed_strategy_without_hooks_still_runs_on_books():
+    class Minimal:
+        def on_start(self): ...
+        def on_end(self): ...
+        def on_market_data(self, bar): return None
+
+    execution = ExecutionSystem(
+        data_src=ListDataSource([_book(0, [(1.0, 1)], [(2.0, 1)]), _trade(1, 1.5), _bar(2, 1.5)]),
+        strategy=Minimal(),
+    )
+    _run(execution)
+
+
+def test_equity_snapshots_are_bounded_by_snapshot_interval():
+    books = [_book(second, [(100.0 + second * 0.01, 10)], [(100.5 + second * 0.01, 10)]) for second in range(31)]
+    portfolio = BasicPortfolio(init_capital=1_000.0)
+    execution = ExecutionSystem(
+        data_src=ListDataSource(books),
+        strategy=BarOnlyStrategy(),
+        risk_manager=RiskManager(rules=[]),
+        portfolio=portfolio,
+        broker=_sim_broker(),
+        snapshot_interval=timedelta(seconds=10),
+    )
+    _run(execution)
+
+    points = list(portfolio.equity_curve)
+    assert [point.time_stamp for point in points] == [_at(0), _at(10), _at(20), _at(30)]
+    assert portfolio.last_prices["TEST"] == pytest.approx(100.55)
+
+
+class BuyOnceStrategy(OrderBookStrategy):
+    def __init__(self, quantity: float = 5.0) -> None:
+        super().__init__()
+        self.quantity = quantity
+        self.done = False
+
+    def on_start(self) -> None: ...
+    def on_end(self) -> None: ...
+
+    def on_order_book(self, book: OrderBook, context: StrategyContext):
+        if self.done or book.best_ask is None:
+            return None
+        self.done = True
+        return Signal(book.time_stamp, book.symbol, SignalType.BUY, book.best_ask.price,
+                      quantity=self.quantity, limit_price=book.best_ask.price + 5.0)
+
+
+def test_final_equity_point_reflects_the_last_marks():
+    books = [_book(second, [(100.0 + second, 10)], [(100.5 + second, 10)]) for second in range(6)]
+    strategy = BuyOnceStrategy()
+    portfolio = BasicPortfolio(init_capital=10_000.0)
+    execution = ExecutionSystem(
+        data_src=ListDataSource(books),
+        strategy=strategy,
+        risk_manager=RiskManager(rules=[PassThroughRule()]),
+        portfolio=portfolio,
+        broker=_sim_broker(),
+        snapshot_interval=timedelta(hours=1),
+    )
+    _run(execution)
+
+    curve = list(portfolio.equity_curve)
+    position = portfolio.open_qty_by_symbol.get("TEST", 0.0)
+    expected = portfolio.cash_balance + position * portfolio.last_prices["TEST"]
+
+    assert position > 0.0
+    assert curve[-1].time_stamp == books[-1].time_stamp
+    assert curve[-1].equity == pytest.approx(expected)
+    assert portfolio.current_equity == pytest.approx(expected)
+
+
+def test_flush_does_not_duplicate_the_last_bar_point():
+    bars = [_bar(second, 100.0 + second) for second in range(4)]
+    portfolio = BasicPortfolio(init_capital=1_000.0)
+    execution = ExecutionSystem(
+        data_src=ListDataSource(bars),
+        strategy=BarOnlyStrategy(),
+        risk_manager=RiskManager(rules=[]),
+        portfolio=portfolio,
+        broker=_sim_broker(),
+    )
+    _run(execution)
+
+    curve = list(portfolio.equity_curve)
+    assert len(curve) == len(bars)
+    assert curve[-1].time_stamp == bars[-1].time_stamp
+
+
+def test_bars_still_snapshot_every_bar_and_feed_price_history():
+    bars = [_bar(second, 100.0 + second) for second in range(5)]
+    rule = PassThroughRule()
+
+    class BuyOnLast(Strategy):
+        def on_start(self): ...
+        def on_end(self): ...
+        def on_market_data(self, bar):
+            if bar.close == 104.0:
+                return Signal(time_stamp=bar.time_stamp, symbol=bar.symbol, signal_type=SignalType.BUY,
+                              ref_price=bar.close, quantity=1.0)
+            return None
+
+    portfolio = BasicPortfolio(init_capital=1_000.0)
+    execution = ExecutionSystem(
+        data_src=ListDataSource(bars),
+        strategy=BuyOnLast(),
+        risk_manager=RiskManager(rules=[rule]),
+        portfolio=portfolio,
+        broker=_sim_broker(),
+        snapshot_interval=timedelta(hours=1),
+    )
+    _run(execution)
+
+    assert len(list(portfolio.equity_curve)) == 5
+    assert rule.contexts[0].price_history == {"TEST": [100.0, 101.0, 102.0, 103.0, 104.0]}

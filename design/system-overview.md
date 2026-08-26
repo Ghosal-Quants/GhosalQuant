@@ -119,17 +119,28 @@ orders, and a broker (simulated or real) handles execution and fills.
 The flow of information through the current system is as follows:
 
 ```
-DataSource -> ExecutionSystem -> Strategy -> Signal
-                                               |
-                                               +-> SignalSink chain (optional, e.g. PrintSink, DataFrameSink)
-                                               |
-                                               +-> RiskManager -> Order -> Broker -> Fill -> Portfolio
+DataSource -> MarketEvent -> ExecutionSystem -> Strategy -> Signal(s)
+              (Bar |                                           |
+               OrderBook |                                     +-> SignalSink chain (optional, e.g. PrintSink, DataFrameSink)
+               PublicTrade)                                    |
+                                                               +-> RiskManager -> Order -> Broker -> Fill -> Portfolio
 ```
 
-On every bar the `ExecutionSystem` also:
-1. Passes the latest `Bar` to the `Broker`.
-2. Updates the `Portfolio` equity from the latest bar price.
-3. Drains any new `Fill`s from the `Broker` and feeds them into the `Portfolio`.
+A `DataSource` yields `MarketEvent`s: `Bar`s, `OrderBook`s, and `PublicTrade`s in any mix. For every event the
+`ExecutionSystem`:
+1. Passes the event to the `Broker` (`on_bar` / `on_order_book` / `on_public_trade`). A simulation broker may return
+   an adjusted view of an order book for the strategy to see.
+2. Marks the `Portfolio` from the **raw** event: a bar's close, a two-sided book's mid (or bid/ask under
+   `MarkPolicy.CONSERVATIVE`), or a print. A one-sided book leaves the previous mark in place. Bars snapshot equity
+   every time; books and prints snapshot at most once per `snapshot_interval` (and whenever a fill changed the
+   accounting), so a high-frequency book feed does not bloat the equity curve.
+3. Records the bar close in `price_history` (bars only — the risk rules read it as a bar series).
+4. Drains any new `Fill`s from the `Broker`, feeds them into the `Portfolio`, and calls `Strategy.on_fill`.
+5. Dispatches the event to `on_market_data(bar)`, `on_order_book(book, context)`, or `on_public_trade(trade, context)`
+   and passes each resulting `Signal` through the sinks and the `RiskManager`; accepted orders are reported back
+   through `Strategy.on_order_accepted(order, broker_order_id)`.
+
+The `RiskContext` and `StrategyContext` for an event are built once, lazily, and shared by every signal it produces.
 
 ## 2 Core types
 The primary types used throughout the system can be imported from `ghosalquant.types`.
@@ -259,12 +270,61 @@ class RiskContext:
     price_history: dict[str, list[float]] | None = None
 ```
 
+### 2.8 Order-Book Market Data
+Alongside `Bar`, a data source may yield the two order-book event types. All three are `MarketEvent`s.
+```python
+@dataclass(frozen=True, slots=True)
+class BookLevel:
+    price: float
+    quantity: float
+
+@dataclass(frozen=True, slots=True)
+class OrderBook:
+    time_stamp: datetime
+    symbol: str
+    bids: tuple[BookLevel, ...]      # best first, descending price
+    asks: tuple[BookLevel, ...]      # best first, ascending price
+    sequence: int | None = None
+    checksum: str | None = None
+    # derived once on construction: best_bid, best_ask, spread, mid_price, spread_bps, bid_quantity, ask_quantity
+    def is_two_sided(self) -> bool: ...
+    def is_crossed(self) -> bool: ...
+    def imbalance(self, depth: int = 5) -> float | None: ...
+    def replace(self, **changes) -> "OrderBook": ...
+
+@dataclass(frozen=True, slots=True)
+class PublicTrade:
+    time_stamp: datetime                 # exchange time
+    symbol: str
+    price: float
+    quantity: float
+    trade_id: str | None = None
+    aggressor: SignalType | None = None  # side of the taker, when the feed reports it
+    observed_at: datetime | None = None  # when this process saw it; None means == time_stamp
+
+MarketEvent = Bar | OrderBook | PublicTrade
+
+class Liquidity(str, Enum):
+    MAKER = "maker"
+    TAKER = "taker"
+```
+
+`OpenOrderView` is the read-only view of a resting order that brokers implementing `OpenOrderQueries` expose; it
+appears in `StrategyContext.open_orders` (this symbol) and `RiskContext.open_orders` (all symbols).
+`ghosalquant.core.metadata_keys` names the metadata keys the framework itself reads and writes on signals and orders
+(`LIMIT_PRICE`, `LIQUIDITY`, `ORDER_SLOT`, `MAX_ORDER_AGE_SECONDS`, ...); `Order.limit_price` returns
+`metadata["limit_price"]` when set, else `ref_price`, and `Signal.with_metadata(**updates)` returns a copy with merged
+metadata.
+
 ## 3 Data Sources
 Data sources are subclasses of the abstract `DataSource` base class from `ghosalquant.data_layer.datasource_base`.
 The base class requires implementation of:
 ```python
-async def __aiter__(self) -> AsyncIterable[Bar]: ...
+async def __aiter__(self) -> AsyncIterable[MarketEvent]: ...
 ```
+Sources that only know about bars simply yield bars. `merge_datasources(*sources)` (`data_layer.merge`) combines
+several sources into one time-ordered stream, with a stable tiebreak at equal time: public trade, then order book,
+then bar — so a print can fill a resting order before the strategy sees the post-trade book.
 
 ### 3.1 Available Data Sources
 | Class | Module | Description |
@@ -272,7 +332,8 @@ async def __aiter__(self) -> AsyncIterable[Bar]: ...
 | `YFinanceDataSource` | `data_layer.yfinance_datasource` | Single-symbol historical data via yfinance. Accepts start/end as datetimes or Y/M/D integers. |
 | `YFinanceMultiDataSource` | `data_layer.yfinance_multi_datasource` | Multi-symbol historical data via yfinance. Used by `Backtester.from_config()`. Supports session time filtering and multi-timeframe via `_YFINANCE_TFS` mapping. |
 | `DataFrameDataSource` | `data_layer.dataframe_datasource` | Wraps an existing `pandas.DataFrame` and yields `Bar` objects row by row. Supports custom column names and optional symbol/timestamp columns. |
-| `ListDataSource` | `data_layer.list_datasource` | Wraps a `Sequence[Bar]` and yields them in order. Useful for testing. |
+| `ListDataSource` | `data_layer.list_datasource` | Wraps a `Sequence[MarketEvent]` (bars, order books, public trades) and yields them in order. Useful for testing. |
+| `MergedDataSource` | `data_layer.merge` | K-way merge of several sources by `time_stamp`; built with `merge_datasources(...)`. |
 | `ParquetPolygonDataSource` | `data_layer.parquet_polygon_datasource` | Reads Polygon OHLCV data from a local `.parquet` file. Supports date/session filtering and timeframe resampling. Driven by `Config`. |
 | `LiveIBKRDataSource` | `data_layer.live_ibkr_datasource` | Streams live IBKR ticks via `ib_insync`, emits `Bar` objects at a configurable throttled cadence, and steps down to delayed data when live market data is unavailable. |
 | `LivePolygonDataSource` | `data_layer.live_polygon_datasource` | Streams live (or 15-min delayed) bars from Polygon's WebSocket API. Supports `1SEC` and `1MIN` resolutions with automatic reconnection. |
@@ -296,14 +357,41 @@ class Strategy(ABC):
     @abstractmethod
     def on_end(self) -> None: ...
 
+    # Optional hooks with no-op defaults
+    def on_order_book(self, book: OrderBook, context: StrategyContext) -> SignalResult: ...
+    def on_public_trade(self, trade: PublicTrade, context: StrategyContext) -> SignalResult: ...
+    def on_fill(self, fill: Fill) -> None: ...
+    def on_order_accepted(self, order: Order, broker_order_id: str | None) -> None: ...
+
     def calculate_quantity(self, confidence) -> float | None: ...
 ```
 
 - `on_start()`: Called before any market data is received.
 - `on_market_data(bar)`: Called for each `Bar`. Should return a `Signal` or `None`.
+- `on_order_book(book, context)`: Called for each `OrderBook`. May return `None`, one `Signal`, or an iterable of
+  signals (`SignalResult`). Default: no-op.
+- `on_public_trade(trade, context)`: Called for each `PublicTrade`. Same contract. Default: no-op.
+- `on_fill(fill)`: Called after the `Portfolio` processed a fill. Default: no-op.
+- `on_order_accepted(order, broker_order_id)`: Called after the `Broker` accepted an order. Default: no-op.
 - `on_end()`: Called after all market data has been processed.
 - `calculate_quantity(confidence)`: Built-in helper that returns `max_qty` if confidence >= threshold, else `min_qty`.
   Strategies may override this.
+
+`StrategyContext` (`ghosalquant.execution.context`) is what the two order-book hooks receive alongside the event:
+```python
+@dataclass(frozen=True, slots=True)
+class StrategyContext:
+    symbol: str
+    position_quantity: float
+    average_entry_price: float | None
+    cash: float
+    open_orders: tuple[OpenOrderView, ...]   # this symbol's resting orders, when the broker reports them
+    risk: RiskContext
+    # helpers: has_open_orders, open_buy_quantity, open_sell_quantity, open_orders_for(side), open_quantity_at(price, side)
+```
+
+`OrderBookStrategy` is a `Strategy` for which `on_order_book` is mandatory and `on_market_data` is a no-op — the
+base class for strategies driven by books and prints rather than bars.
 
 ### 4.1 Included Benchmark Strategies
 | Class | Module | Description |
@@ -383,8 +471,10 @@ Portfolio management is defined by the `Portfolio` protocol from `ghosalquant.po
 ```python
 class Portfolio(Protocol):
     async def process_fill(self, fill: Fill) -> None: ...
-    def update_equity(self, bar: Bar) -> None: ...
+    def mark(self, symbol: str, price: float, time_stamp: datetime) -> None: ...   # records a price, no snapshot
+    def update_equity(self, bar: Bar) -> None: ...                                  # mark + snapshot
     def snapshot_equity(self, time_stamp: datetime, prices: dict[str, float]) -> None: ...
+    def average_entry_price(self, symbol: str) -> float | None: ...
 
     @property
     def closed_trades(self) -> Iterable[Trade]: ...
@@ -404,8 +494,14 @@ class Portfolio(Protocol):
 The default implementation (`ghosalquant.portfolio.basic_portfolio`). Key behaviours:
 - **`process_fill(fill)`**: Opens a trade on `BUY` fills (deducting cash for notional + commission) and closes trades
   on `SELL` fills using LIFO order. Supports partial closes.
-- **`update_equity(bar)`**: Updates the last known price for a symbol and records an `EquityPoint`.
+- **`mark(symbol, price, time_stamp)`**: Updates the last known price for a symbol without recording an
+  `EquityPoint`; the `ExecutionSystem` decides when a snapshot is due.
+- **`update_equity(bar)`**: `mark(...)` followed by a snapshot (an `EquityPoint` per bar).
+- **`average_entry_price(symbol)`**: Open cost divided by open quantity, or `None` when flat.
 - Tracks `fees_paid` separately.
+
+`ghosalquant.portfolio.marks` holds the `MarkPolicy` (`MID` or `CONSERVATIVE`) and the `mark_from_book` /
+`mark_from_trade` functions the loop uses.
 
 ## 9 Brokers
 Brokers are subclasses of the abstract `Broker` base class from `ghosalquant.brokerage.broker_base`.
@@ -415,6 +511,9 @@ class Broker(ABC):
     async def connect(self) -> None: ...      # Optional, no-op by default
     async def disconnect(self) -> None: ...   # Optional, no-op by default
     def on_bar(self, bar: Bar) -> None: ...   # Optional, used by simulation brokers
+    def on_order_book(self, book: OrderBook) -> OrderBook: ...   # Optional; returns the book the strategy sees
+    def on_public_trade(self, trade: PublicTrade) -> None: ...  # Optional
+    def on_market_event(self, event: MarketEvent) -> MarketEvent: ...  # Routes to the three hooks above
 
     @abstractmethod
     def submit(self, order: Order) -> str | None: ...
@@ -422,6 +521,10 @@ class Broker(ABC):
     @abstractmethod
     def get_fills(self) -> list[Fill]: ...
 ```
+
+A broker may additionally implement the `OpenOrderQueries` protocol (`ghosalquant.brokerage.open_orders`) —
+`open_order_views(symbol=None)` and `cancel_open_orders(symbol, side=None)` — in which case the `ExecutionSystem`
+fills `StrategyContext.open_orders` and `RiskContext.open_orders` from it. `SimBroker` does.
 
 ### 9.1 `SimBroker`
 A simulated broker (`ghosalquant.brokerage.simulated`) with configurable:
@@ -438,6 +541,11 @@ A simulated broker (`ghosalquant.brokerage.simulated`) with configurable:
 Orders are submitted after a strategy sees a bar and become eligible on a later bar once latency has elapsed. The
 broker uses `on_bar(bar)` to advance simulated market time, caps fills by bar volume participation, and prices fills
 from the eligible bar with spread, slippage, and participation-based impact.
+
+Against an `OrderBook` the broker applies a deliberately naive touch-crossing rule: an eligible order crosses the
+touch (a `BUY` at the best ask, a `SELL` at the best bid) for up to the displayed quantity at that level, and an
+order whose `limit_price` the touch has not reached rests. There is no queue position, participation cap, or depth
+sweeping. Public trades only advance market time.
 
 ### 9.2 `IBKRBroker`
 A live broker implementation (`ghosalquant.brokerage.ibkr`) using `ib_insync` to connect to Interactive Brokers TWS

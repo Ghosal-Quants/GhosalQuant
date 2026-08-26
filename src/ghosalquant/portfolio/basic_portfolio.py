@@ -56,12 +56,21 @@ class BasicPortfolio(Portfolio):
             prices=self._last_prices
         )
 
+    def mark(self, symbol: str, price: float, time_stamp: datetime) -> None:
+        self._last_prices[symbol] = float(price)
+
     def update_equity(self, bar: Bar) -> None:
-        self._last_prices[bar.symbol] = float(bar.close)
+        self.mark(bar.symbol, bar.close, bar.time_stamp)
         self.snapshot_equity(
             time_stamp=bar.time_stamp,
             prices=self._last_prices
         )
+
+    def average_entry_price(self, symbol: str) -> float | None:
+        quantity = self._open_qty_by_symbol.get(symbol, 0.0)
+        if quantity <= 0.0:
+            return None
+        return self._open_cost_by_symbol.get(symbol, 0.0) / quantity
 
     def snapshot_equity(self, time_stamp: datetime, prices: dict[str, float]) -> None:
         positions_value: float = 0.0

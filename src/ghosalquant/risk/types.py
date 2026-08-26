@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Protocol
 
-from ..core.types import SignalType
+from ..core.types import OpenOrderView, SignalType
 
 @dataclass(slots=True)
 class OrderDraft:
@@ -25,6 +25,7 @@ class RiskContext:
     current_drawdown: float | None = None  # -0.05 means 5% below peak
     peak_equity: float | None = None
     price_history: dict[str, list[float]] | None = None # recent close prices per symbol
+    open_orders: tuple[OpenOrderView, ...] = ()
 
 class RiskRule(Protocol):
     def apply(self, draft: OrderDraft, context: RiskContext) -> bool:

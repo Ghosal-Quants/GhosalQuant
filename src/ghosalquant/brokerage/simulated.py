@@ -5,7 +5,8 @@ import math
 import random
 
 from .broker_base import Broker
-from ..core.types import Bar, Fill, Order, SignalType
+from ..core import metadata_keys
+from ..core.types import Bar, BookLevel, Fill, OpenOrderView, Order, OrderBook, PublicTrade, SignalType
 
 
 @dataclass(slots=True)
@@ -21,6 +22,11 @@ class SimOpenOrderState:
 class SimBroker(Broker):
     """
     Bar-driven simulated broker with latency, liquidity caps, and fill modelling.
+
+    Order books are also accepted: an eligible order crosses the touch (BUY at the best ask, SELL
+    at the best bid) for up to the displayed quantity at that level, and an order whose limit the
+    touch does not reach rests. This is deliberately naive — no queue position, no participation
+    cap, no depth sweeping — and exists so a book-only run fills something.
     """
 
     _QTY_EPSILON = 1e-9
@@ -86,6 +92,16 @@ class SimBroker(Broker):
         self._current_market_time = bar.time_stamp
         self._process_bar(bar)
 
+    def on_order_book(self, book: OrderBook) -> OrderBook:
+        self._has_market_data = True
+        self._current_market_time = book.time_stamp
+        self._process_book(book)
+        return book
+
+    def on_public_trade(self, trade: PublicTrade) -> None:
+        self._has_market_data = True
+        self._current_market_time = trade.time_stamp
+
     def get_fills(self) -> list[Fill]:
         if not self._has_market_data:
             self._process_wall_clock_orders()
@@ -94,6 +110,35 @@ class SimBroker(Broker):
         self._pending_fills = []
         return fills
 
+    # ----- OpenOrderQueries ----- #
+    def open_order_views(self, symbol: str | None = None) -> tuple[OpenOrderView, ...]:
+        views: list[OpenOrderView] = []
+        for state in self._open_orders.values():
+            if symbol is not None and state.order.symbol != symbol:
+                continue
+            views.append(
+                OpenOrderView(
+                    broker_order_id=state.broker_order_id,
+                    order=state.order,
+                    remaining_quantity=state.remaining_qty,
+                    submitted_at=state.submitted_at,
+                    limit_price=self._order_limit(state.order),
+                )
+            )
+        return tuple(views)
+
+    def cancel_open_orders(self, symbol: str, side: SignalType | None = None) -> int:
+        cancelled = 0
+        for order_id, state in list(self._open_orders.items()):
+            if state.order.symbol != symbol:
+                continue
+            if side is not None and state.order.side is not side:
+                continue
+            del self._open_orders[order_id]
+            cancelled += 1
+        return cancelled
+
+    # ----- Fill models ----- #
     def _process_bar(self, bar: Bar) -> None:
         for order_id, state in list(self._open_orders.items()):
             if state.order.symbol != bar.symbol:
@@ -123,6 +168,60 @@ class SimBroker(Broker):
             state.remaining_qty = max(0.0, state.remaining_qty - fill_qty)
             if state.remaining_qty <= self._QTY_EPSILON:
                 del self._open_orders[order_id]
+
+    def _process_book(self, book: OrderBook) -> None:
+        for order_id, state in list(self._open_orders.items()):
+            if state.order.symbol != book.symbol:
+                continue
+            if not self._time_reached(book.time_stamp, state.eligible_at):
+                continue
+            if state.reject_on_eligibility:
+                del self._open_orders[order_id]
+                continue
+
+            touch = self._touch_level(state.order, book)
+            if touch is None:
+                continue
+
+            fill_qty = min(state.remaining_qty, float(touch.quantity))
+            if fill_qty <= self._QTY_EPSILON:
+                continue
+
+            self._pending_fills.append(
+                Fill(
+                    time_stamp=book.time_stamp,
+                    symbol=state.order.symbol,
+                    side=state.order.side,
+                    quantity=fill_qty,
+                    price=float(touch.price),
+                    broker_order_id=order_id,
+                    commission=self._compute_commission(fill_qty),
+                )
+            )
+
+            state.remaining_qty = max(0.0, state.remaining_qty - fill_qty)
+            if state.remaining_qty <= self._QTY_EPSILON:
+                del self._open_orders[order_id]
+
+    def _touch_level(self, order: Order, book: OrderBook) -> BookLevel | None:
+        """The level an order would cross at, or None when it rests (no touch, or limit not reached)."""
+        limit = self._order_limit(order)
+        if order.side is SignalType.BUY:
+            level = book.best_ask
+            if level is None or (limit is not None and level.price > limit):
+                return None
+            return level
+        level = book.best_bid
+        if level is None or (limit is not None and level.price < limit):
+            return None
+        return level
+
+    @staticmethod
+    def _order_limit(order: Order) -> float | None:
+        if order.metadata is None:
+            return None
+        value = order.metadata.get(metadata_keys.LIMIT_PRICE)
+        return None if value is None else float(value)
 
     def _process_wall_clock_orders(self) -> None:
         for order_id, state in list(self._open_orders.items()):
