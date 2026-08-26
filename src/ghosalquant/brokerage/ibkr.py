@@ -74,7 +74,11 @@ class IBKRBroker(Broker):
             Stock(order.symbol, "SMART", "USD")
         )
         action = "BUY" if order.side is SignalType.BUY else "SELL"
-        ib_order = MarketOrder(action, float(order.quantity))
+        limit = order.declared_limit_price
+        if limit is None:
+            ib_order = MarketOrder(action, float(order.quantity))
+        else:
+            ib_order = LimitOrder(action, float(order.quantity), float(limit))
 
         trade: IBTrade = self.ib.placeOrder(contract, ib_order)
         order_id = getattr(trade.order, "orderId", None)

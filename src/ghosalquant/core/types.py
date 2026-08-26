@@ -175,6 +175,23 @@ class PublicTrade:
 MarketEvent = Union[Bar, OrderBook, PublicTrade]
 
 
+def _coerce_liquidity(value: Any) -> "Liquidity | None":
+    if value is None or isinstance(value, Liquidity):
+        return value
+    if isinstance(value, str):
+        return Liquidity(value.lower())
+    raise TypeError("liquidity must be a Liquidity, its string value, or None")
+
+
+def _validate_limit_price(value: Any) -> None:
+    if value is None:
+        return
+    if not isinstance(value, (int, float)):
+        raise TypeError("limit_price must be numeric or None")
+    if value <= 0:
+        raise ValueError("limit_price must be > 0")
+
+
 @dataclass(frozen=True, slots=True)
 class Signal:
     time_stamp: datetime
@@ -184,6 +201,8 @@ class Signal:
     confidence: float = 1.0
     quantity: float | None = None
     metadata: dict[str, Any] | None = None
+    limit_price: float | None = None
+    liquidity: Liquidity | None = None
 
     def __post_init__(self):
         if not isinstance(self.signal_type, SignalType):
@@ -194,6 +213,9 @@ class Signal:
 
         if self.ref_price is not None and not isinstance(self.ref_price, (int, float)):
             raise TypeError("Price must be a number or None")
+
+        _validate_limit_price(self.limit_price)
+        object.__setattr__(self, "liquidity", _coerce_liquidity(self.liquidity))
 
     def with_metadata(self, **updates: Any) -> "Signal":
         """Return a copy whose metadata is the existing metadata merged with ``updates``."""
@@ -222,6 +244,8 @@ class Order:
     quantity: float
     ref_price: float
     metadata: dict[str, Any] | None = None
+    limit_price: float | None = None
+    liquidity: Liquidity | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.quantity, (int, float)):
@@ -233,17 +257,32 @@ class Order:
         if not isinstance(self.ref_price, (int, float)):
             raise TypeError("Order ref_price must be numeric")
 
+        _validate_limit_price(self.limit_price)
+        object.__setattr__(self, "liquidity", _coerce_liquidity(self.liquidity))
+
     @property
-    def limit_price(self) -> float:
+    def declared_limit_price(self) -> float | None:
         """
-        The price a broker should use for this order: ``metadata["limit_price"]`` when the
-        strategy set one, otherwise ``ref_price``.
+        The limit the strategy asked for: the ``limit_price`` field, else ``metadata["limit_price"]``
+        (the pre-field convention, still honoured for old signal logs), else ``None`` for a market order.
         """
+        if self.limit_price is not None:
+            return float(self.limit_price)
         if self.metadata is not None:
             value = self.metadata.get("limit_price")
             if value is not None:
                 return float(value)
-        return float(self.ref_price)
+        return None
+
+    @property
+    def is_limit(self) -> bool:
+        return self.declared_limit_price is not None
+
+    @property
+    def effective_limit_price(self) -> float:
+        """The price a simulation should use: the declared limit, otherwise ``ref_price``."""
+        declared = self.declared_limit_price
+        return float(self.ref_price) if declared is None else declared
 
     def __str__(self) -> str:
         return (
@@ -287,6 +326,7 @@ class Fill:
     order_id: str | None = None
     broker_order_id: str | None = None  # For things like IBKR IDs
     commission: float | None = None
+    liquidity: Liquidity | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -315,7 +355,7 @@ class OpenOrderView:
 
     @property
     def notional(self) -> float:
-        price = self.limit_price if self.limit_price is not None else self.order.limit_price
+        price = self.limit_price if self.limit_price is not None else self.order.effective_limit_price
         return float(price) * float(self.remaining_quantity)
 
 

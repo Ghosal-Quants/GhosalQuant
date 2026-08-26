@@ -5,8 +5,7 @@ import math
 import random
 
 from .broker_base import Broker
-from ..core import metadata_keys
-from ..core.types import Bar, BookLevel, Fill, OpenOrderView, Order, OrderBook, PublicTrade, SignalType
+from ..core.types import Bar, BookLevel, Fill, Liquidity, OpenOrderView, Order, OrderBook, PublicTrade, SignalType
 
 
 @dataclass(slots=True)
@@ -123,6 +122,7 @@ class SimBroker(Broker):
                     remaining_quantity=state.remaining_qty,
                     submitted_at=state.submitted_at,
                     limit_price=self._order_limit(state.order),
+                    liquidity=state.order.liquidity,
                 )
             )
         return tuple(views)
@@ -153,13 +153,21 @@ class SimBroker(Broker):
             if fill_qty <= self._QTY_EPSILON:
                 continue
 
+            price = self._compute_fill_price(state.order, bar, fill_qty)
+            limit = state.order.declared_limit_price
+            if limit is not None and (
+                (state.order.side is SignalType.BUY and price > limit)
+                or (state.order.side is SignalType.SELL and price < limit)
+            ):
+                continue
+
             self._pending_fills.append(
                 Fill(
                     time_stamp=bar.time_stamp,
                     symbol=state.order.symbol,
                     side=state.order.side,
                     quantity=fill_qty,
-                    price=self._compute_fill_price(state.order, bar, fill_qty),
+                    price=price,
                     broker_order_id=order_id,
                     commission=self._compute_commission(fill_qty),
                 )
@@ -196,6 +204,7 @@ class SimBroker(Broker):
                     price=float(touch.price),
                     broker_order_id=order_id,
                     commission=self._compute_commission(fill_qty),
+                    liquidity=Liquidity.TAKER,
                 )
             )
 
@@ -218,10 +227,7 @@ class SimBroker(Broker):
 
     @staticmethod
     def _order_limit(order: Order) -> float | None:
-        if order.metadata is None:
-            return None
-        value = order.metadata.get(metadata_keys.LIMIT_PRICE)
-        return None if value is None else float(value)
+        return order.declared_limit_price
 
     def _process_wall_clock_orders(self) -> None:
         for order_id, state in list(self._open_orders.items()):

@@ -46,7 +46,7 @@ class StrategyContext:
         for view in self.open_orders:
             if view.side is not side:
                 continue
-            resting_price = view.limit_price if view.limit_price is not None else view.order.limit_price
+            resting_price = view.limit_price if view.limit_price is not None else view.order.effective_limit_price
             if abs(float(resting_price) - float(price)) <= tolerance:
                 total += float(view.remaining_quantity)
         return total

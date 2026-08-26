@@ -157,11 +157,14 @@ def test_signal_with_metadata_merges_and_preserves_original():
     assert bare.with_metadata(x=1).metadata == {"x": 1}
 
 
-def test_order_limit_price_falls_back_to_ref_price():
-    order = Order(time_stamp=_ts("2025-11-15 09:30:00"), symbol="TEST", side=SignalType.BUY, quantity=1.0, ref_price=100.0)
-    assert order.limit_price == 100.0
+def test_order_limit_price_field_metadata_fallback_and_effective_price():
+    market = Order(time_stamp=_ts("2025-11-15 09:30:00"), symbol="TEST", side=SignalType.BUY, quantity=1.0, ref_price=100.0)
+    assert market.limit_price is None
+    assert market.declared_limit_price is None
+    assert not market.is_limit
+    assert market.effective_limit_price == 100.0
 
-    limited = Order(
+    via_metadata = Order(
         time_stamp=_ts("2025-11-15 09:30:00"),
         symbol="TEST",
         side=SignalType.BUY,
@@ -169,7 +172,26 @@ def test_order_limit_price_falls_back_to_ref_price():
         ref_price=100.0,
         metadata={metadata_keys.LIMIT_PRICE: 99.0},
     )
-    assert limited.limit_price == 99.0
+    assert via_metadata.limit_price is None
+    assert via_metadata.declared_limit_price == 99.0
+    assert via_metadata.is_limit
+    assert via_metadata.effective_limit_price == 99.0
+
+    via_field = Order(
+        time_stamp=_ts("2025-11-15 09:30:00"),
+        symbol="TEST",
+        side=SignalType.BUY,
+        quantity=1.0,
+        ref_price=100.0,
+        metadata={metadata_keys.LIMIT_PRICE: 99.0},
+        limit_price=98.5,
+        liquidity="maker",
+    )
+    assert via_field.declared_limit_price == 98.5  # the field wins over metadata
+    assert via_field.liquidity is Liquidity.MAKER
+
+    with pytest.raises(ValueError):
+        Order(time_stamp=_ts("2025-11-15 09:30:00"), symbol="TEST", side=SignalType.BUY, quantity=1.0, ref_price=100.0, limit_price=0.0)
 
 
 def test_open_order_view_properties():

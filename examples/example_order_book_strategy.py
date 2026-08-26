@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from ghosalquant import OrderBookStrategy
 from ghosalquant.brokerage.simulated import SimBroker
 from ghosalquant.core import metadata_keys
-from ghosalquant.core.types import BookLevel, Fill, OrderBook, PublicTrade, Signal, SignalType
+from ghosalquant.core.types import BookLevel, Fill, Liquidity, OrderBook, PublicTrade, Signal, SignalType
 from ghosalquant.data_layer.list_datasource import ListDataSource
 from ghosalquant.data_layer.merge import merge_datasources
 from ghosalquant.execution.context import StrategyContext
@@ -54,7 +54,9 @@ class JoinTheBidStrategy(OrderBookStrategy):
                 signal_type=SignalType.BUY,
                 ref_price=price,
                 quantity=self.quantity,
-                metadata={metadata_keys.LIMIT_PRICE: price, metadata_keys.REASON: "join_bid"},
+                limit_price=price,
+                liquidity=Liquidity.MAKER,
+                metadata={metadata_keys.REASON: "join_bid"},
             )
 
         if context.position_quantity > 0.0 and context.open_sell_quantity == 0.0:
@@ -65,7 +67,9 @@ class JoinTheBidStrategy(OrderBookStrategy):
                 signal_type=SignalType.SELL,
                 ref_price=price,
                 quantity=context.position_quantity,
-                metadata={metadata_keys.LIMIT_PRICE: price, metadata_keys.REASON: "take_profit"},
+                limit_price=price,
+                liquidity=Liquidity.MAKER,
+                metadata={metadata_keys.REASON: "take_profit"},
             )
         return None
 

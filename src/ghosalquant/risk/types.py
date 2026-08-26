@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Protocol
 
-from ..core.types import OpenOrderView, SignalType
+from ..core.types import Liquidity, OpenOrderView, SignalType
 
 @dataclass(slots=True)
 class OrderDraft:
@@ -15,6 +15,8 @@ class OrderDraft:
     quantity: float | None
     price: float
     metadata: dict[str, Any] = field(default_factory=dict)
+    limit_price: float | None = None
+    liquidity: Liquidity | None = None
 
 
 @dataclass(slots=True)

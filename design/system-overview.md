@@ -311,10 +311,13 @@ class Liquidity(str, Enum):
 
 `OpenOrderView` is the read-only view of a resting order that brokers implementing `OpenOrderQueries` expose; it
 appears in `StrategyContext.open_orders` (this symbol) and `RiskContext.open_orders` (all symbols).
-`ghosalquant.core.metadata_keys` names the metadata keys the framework itself reads and writes on signals and orders
-(`LIMIT_PRICE`, `LIQUIDITY`, `ORDER_SLOT`, `MAX_ORDER_AGE_SECONDS`, ...); `Order.limit_price` returns
-`metadata["limit_price"]` when set, else `ref_price`, and `Signal.with_metadata(**updates)` returns a copy with merged
-metadata.
+`Signal`, `OrderDraft`, and `Order` carry first-class `limit_price` (``None`` means a market order) and `liquidity`
+fields; `RiskManager.evaluate` copies them from the signal to the order and rules may tighten the limit on the draft.
+`Order.declared_limit_price` also honours the older `metadata["limit_price"]` convention, `Order.is_limit` says whether
+either is set, and `Order.effective_limit_price` falls back to `ref_price` for simulations. `Fill.liquidity` reports
+maker/taker when the broker knows. `ghosalquant.core.metadata_keys` names the remaining metadata keys the framework
+reads and writes (`ORDER_SLOT`, `MAX_ORDER_AGE_SECONDS`, `REASON`, ...), and `Signal.with_metadata(**updates)` returns
+a copy with merged metadata.
 
 ## 3 Data Sources
 Data sources are subclasses of the abstract `DataSource` base class from `ghosalquant.data_layer.datasource_base`.

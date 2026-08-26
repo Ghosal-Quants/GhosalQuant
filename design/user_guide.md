@@ -195,8 +195,7 @@ each to the matching hook. Subclass `OrderBookStrategy` (bars are ignored, `on_o
 
 ```python
 from ghosalquant import OrderBookStrategy
-from ghosalquant.core import metadata_keys
-from ghosalquant.core.types import Fill, OrderBook, Signal, SignalType
+from ghosalquant.core.types import Fill, Liquidity, OrderBook, Signal, SignalType
 from ghosalquant.execution.context import StrategyContext
 
 
@@ -212,14 +211,14 @@ class JoinTheBid(OrderBookStrategy):
             return Signal(
                 time_stamp=book.time_stamp, symbol=book.symbol, signal_type=SignalType.BUY,
                 ref_price=price, quantity=10.0,
-                metadata={metadata_keys.LIMIT_PRICE: price},  # the price the broker should use
+                limit_price=price, liquidity=Liquidity.MAKER, # a limit order; omit limit_price for a market order
             )
         if context.position_quantity > 0.0 and context.open_sell_quantity == 0.0:
             price = round(context.average_entry_price + 0.02, 2)
             return [Signal(                                   # a hook may return several signals
                 time_stamp=book.time_stamp, symbol=book.symbol, signal_type=SignalType.SELL,
                 ref_price=price, quantity=context.position_quantity,
-                metadata={metadata_keys.LIMIT_PRICE: price},
+                limit_price=price, liquidity=Liquidity.MAKER,
             )]
         return None
 
@@ -247,8 +246,11 @@ execution_system = ExecutionSystem(
 asyncio.run(execution_system.run())
 ```
 
-`SimBroker` fills an order against a book when the touch reaches its price, for up to the displayed quantity at
-that level. A full example with synthetic books is in `examples/example_order_book_strategy.py`.
+`Signal.limit_price` and `Signal.liquidity` travel through the `RiskManager` (rules may tighten the limit) onto the
+`Order`; `SimBroker` rests a limit order until a bar or a book touch reaches its price, and `IBKRBroker` sends a
+`LimitOrder` instead of a `MarketOrder`. `SimBroker` fills an order against a book when the touch reaches its
+price, for up to the displayed quantity at that level. A full example with synthetic books is in
+`examples/example_order_book_strategy.py`.
 
 ## Quick Reference
 
