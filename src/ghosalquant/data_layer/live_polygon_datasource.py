@@ -5,8 +5,11 @@ from datetime import datetime, timezone
 from typing import AsyncIterable, Iterable
 import websockets
 
-from ghosalquant.core.types import Bar
+from ghosalquant.core.types import Bar, BookLevel, MarketEvent, OrderBook, PublicTrade
 from ghosalquant.data_layer.datasource_base import DataSource
+
+
+POLYGON_EVENT_KINDS = ("bars", "quotes", "trades")
 
 
 class LivePolygonDataSource(DataSource):
@@ -16,12 +19,17 @@ class LivePolygonDataSource(DataSource):
             symbols: Iterable[str],
             base_resolution: str = "1MIN", # 1SEC, 1MIN, ...
             *,
+            events: Iterable[str] = ("bars",),
             websocket_url: str = "wss://delayed.massive.com/stocks",  # Default to 15 min delayed data
             reconnect_base_sec: float = 0.5,
             reconnect_max_sec: float = 10.0
     ):
         """
-        A live data source that connects to Polygon's WebSocket API for live stock bars.
+        A live data source that connects to Polygon's WebSocket API.
+
+        ``events`` selects what is streamed: ``"bars"`` (aggregate channels ``A``/``AM`` -> ``Bar``),
+        ``"quotes"`` (channel ``Q`` -> a one-level ``OrderBook`` per NBBO update), and ``"trades"``
+        (channel ``T`` -> ``PublicTrade``). Sizes are passed through as the feed reports them.
 
         "wss://delayed.massive.com/stocks" is the endpoint for delayed data
         "wss://socket.massive.com/stocks" is the endpoint for delayed data
@@ -37,6 +45,7 @@ class LivePolygonDataSource(DataSource):
         self._api_key = api_key
         self._symbols = symbols
         self.base_resolution = base_resolution.strip().upper()
+        self.events = _normalise_event_kinds(events, POLYGON_EVENT_KINDS)
 
         self._websocket_url = websocket_url
         self._reconnect_base_sec = reconnect_base_sec
@@ -46,14 +55,14 @@ class LivePolygonDataSource(DataSource):
         if self.base_resolution not in {"1SEC", "1MIN"}:
             raise ValueError(f"Unsupported base_resolution: {self.base_resolution} (use 1SEC or 1MIN)")
 
-    async def __aiter__(self) -> AsyncIterable[Bar]:
+    async def __aiter__(self) -> AsyncIterable[MarketEvent]:
         backoff = self._reconnect_base_sec
 
         while True:
             try:
-                async for bar in self._stream_session():
+                async for event in self._stream_session():
                     backoff = self._reconnect_base_sec
-                    yield bar
+                    yield event
             except (
                     websockets.ConnectionClosed,
                     websockets.ConnectionClosedError,
@@ -66,7 +75,18 @@ class LivePolygonDataSource(DataSource):
                 await asyncio.sleep(backoff)
                 backoff = min(self._reconnect_max_sec, backoff * 2)
 
-    async def _stream_session(self) -> AsyncIterable[Bar]:
+    def subscription_params(self) -> str:
+        """The comma-separated channel list sent in the subscribe message."""
+        channels: list[str] = []
+        if "bars" in self.events:
+            channels.append("AM" if self.base_resolution == "1MIN" else "A")
+        if "quotes" in self.events:
+            channels.append("Q")
+        if "trades" in self.events:
+            channels.append("T")
+        return ",".join(f"{channel}.{sym}" for channel in channels for sym in self._symbols)
+
+    async def _stream_session(self) -> AsyncIterable[MarketEvent]:
         async with websockets.connect(
             self._websocket_url,
             max_queue=64
@@ -75,20 +95,9 @@ class LivePolygonDataSource(DataSource):
             # authenticate
             await ws.send(json.dumps({"action": "auth", "params": self._api_key}))
 
-            # subscribe to bars for each symbol
-            if self.base_resolution == "1MIN":
-                channel = "AM"
-            elif self.base_resolution == "1SEC":
-                channel = "A"
-            else:
-                raise ValueError(f"Unsupported base_resolution: {self.base_resolution}")
-
-            subscriptions = [f"{channel}.{sym}" for sym in self._symbols]
-            params = ",".join(subscriptions)
-
             await ws.send(json.dumps({
                 "action": "subscribe",
-                "params": params
+                "params": self.subscription_params()
             }))
 
             authed = False
@@ -120,10 +129,19 @@ class LivePolygonDataSource(DataSource):
                     if not authed:
                         continue
 
-                    if event.get("ev") in {"A", "AM"}:
-                        bar = self._parse_agg(event)
-                        if bar is not None:
-                            yield bar
+                    parsed = self.parse_event(event)
+                    if parsed is not None:
+                        yield parsed
+
+    def parse_event(self, event: dict) -> MarketEvent | None:
+        kind = event.get("ev")
+        if kind in {"A", "AM"} and "bars" in self.events:
+            return self._parse_agg(event)
+        if kind == "Q" and "quotes" in self.events:
+            return self._parse_quote(event)
+        if kind == "T" and "trades" in self.events:
+            return self._parse_trade(event)
+        return None
 
     @staticmethod
     def _parse_agg(event: dict) -> Bar | None:
@@ -155,7 +173,9 @@ class LivePolygonDataSource(DataSource):
 
         # end timestamp becomes the bar timestamp
         end_ms = event.get("e")
-        ts = datetime.fromtimestamp(int(end_ms) / 1000.0, tz=timezone.utc)
+        if end_ms is None:
+            return None
+        ts = _from_epoch_ms(end_ms)
 
         o = event.get("o")
         h = event.get("h")
@@ -167,3 +187,78 @@ class LivePolygonDataSource(DataSource):
             return None
 
         return Bar(ts, symbol, float(o), float(h), float(l), float(c), int(v))
+
+    @staticmethod
+    def _parse_quote(event: dict) -> OrderBook | None:
+        """
+        An NBBO quote becomes a one-level order book.
+
+        Example: {'ev': 'Q', 'sym': 'AAPL', 'bx': 11, 'bp': 170.0, 'bs': 3, 'ax': 12, 'ap': 170.05, 'as': 5,
+                  'c': 0, 't': 1610000000000, 'q': 12345}
+        """
+        symbol = event.get("sym")
+        stamp = event.get("t")
+        if not symbol or stamp is None:
+            return None
+
+        bids = _quote_side(event.get("bp"), event.get("bs"))
+        asks = _quote_side(event.get("ap"), event.get("as"))
+        if not bids and not asks:
+            return None
+
+        sequence = event.get("q")
+        return OrderBook(
+            time_stamp=_from_epoch_ms(stamp),
+            symbol=symbol,
+            bids=bids,
+            asks=asks,
+            sequence=None if sequence is None else int(sequence),
+        )
+
+    @staticmethod
+    def _parse_trade(event: dict) -> PublicTrade | None:
+        """
+        Example: {'ev': 'T', 'sym': 'AAPL', 'i': '52983525029461', 'x': 4, 'p': 170.02, 's': 100, 'c': [14, 41],
+                  't': 1610000000000, 'q': 12346, 'z': 3}
+        """
+        symbol = event.get("sym")
+        stamp = event.get("t")
+        price = event.get("p")
+        size = event.get("s")
+        if not symbol or stamp is None or price is None or size is None:
+            return None
+        if float(price) <= 0.0 or float(size) <= 0.0:
+            return None
+
+        trade_id = event.get("i")
+        return PublicTrade(
+            time_stamp=_from_epoch_ms(stamp),
+            symbol=symbol,
+            price=float(price),
+            quantity=float(size),
+            trade_id=None if trade_id is None else str(trade_id),
+        )
+
+
+def _normalise_event_kinds(events: Iterable[str], allowed: tuple[str, ...]) -> tuple[str, ...]:
+    kinds = tuple(dict.fromkeys(kind.strip().lower() for kind in events if kind and kind.strip()))
+    if not kinds:
+        raise ValueError(f"events must include at least one of {allowed}")
+    unknown = [kind for kind in kinds if kind not in allowed]
+    if unknown:
+        raise ValueError(f"Unsupported event kinds {unknown}; use {allowed}")
+    return kinds
+
+
+def _quote_side(price, size) -> tuple[BookLevel, ...]:
+    if price is None or size is None:
+        return ()
+    price = float(price)
+    size = float(size)
+    if price <= 0.0 or size < 0.0:
+        return ()
+    return (BookLevel(price, size),)
+
+
+def _from_epoch_ms(value) -> datetime:
+    return datetime.fromtimestamp(int(value) / 1000.0, tz=timezone.utc)

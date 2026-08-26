@@ -338,11 +338,13 @@ then bar — so a print can fill a resting order before the strategy sees the po
 | `ListDataSource` | `data_layer.list_datasource` | Wraps a `Sequence[MarketEvent]` (bars, order books, public trades) and yields them in order. Useful for testing. |
 | `MergedDataSource` | `data_layer.merge` | K-way merge of several sources by `time_stamp`; built with `merge_datasources(...)`. |
 | `ParquetPolygonDataSource` | `data_layer.parquet_polygon_datasource` | Reads Polygon OHLCV data from a local `.parquet` file. Supports date/session filtering and timeframe resampling. Driven by `Config`. |
-| `LiveIBKRDataSource` | `data_layer.live_ibkr_datasource` | Streams live IBKR ticks via `ib_insync`, emits `Bar` objects at a configurable throttled cadence, and steps down to delayed data when live market data is unavailable. |
-| `LivePolygonDataSource` | `data_layer.live_polygon_datasource` | Streams live (or 15-min delayed) bars from Polygon's WebSocket API. Supports `1SEC` and `1MIN` resolutions with automatic reconnection. |
+| `LiveIBKRDataSource` | `data_layer.live_ibkr_datasource` | Streams live IBKR data via `ib_insync` and steps down to delayed data when live market data is unavailable. `events` selects `bars` (throttled ticks -> `Bar`), `order_books` (`reqMktDepth` with `depth` rows -> `OrderBook`, at most every `book_resolution_sec`), and `trades` (tick-by-tick -> `PublicTrade`). |
+| `LivePolygonDataSource` | `data_layer.live_polygon_datasource` | Streams live (or 15-min delayed) data from Polygon's WebSocket API with automatic reconnection. `events` selects `bars` (`A`/`AM`, `1SEC` or `1MIN`), `quotes` (`Q` -> one-level `OrderBook`), and `trades` (`T` -> `PublicTrade`). |
 
 The `datasource_factory.datasource_from_config(cfg)` function creates the appropriate data source from a `Config`
-object (currently supports yfinance, Polygon parquet, and live IBKR).
+object (currently supports yfinance, Polygon parquet, and live IBKR). `DATA.events` (default `["bars"]`) selects the
+event kinds; only `live_ibkr` can provide `order_books` and `trades`, and the factory rejects them for bar-only
+sources.
 
 ## 4 Strategies
 Strategies are subclasses of the abstract `Strategy` base class from `ghosalquant.execution.strategy_base`.

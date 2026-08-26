@@ -73,12 +73,15 @@ SYSTEM:
 
 DATA:
   source: "yfinance"   # or "polygon" / "live_ibkr"
+  events: ["bars"]     # live_ibkr can also stream "order_books" and "trades"
   yfinance: {}
   # live_ibkr:
   #   host: "127.0.0.1"
   #   port: 7497
   #   client_id: 2
   #   bar_resolution_sec: 1
+  #   depth: 5                 # market-depth rows per side for "order_books"
+  #   book_resolution_sec: 0   # 0 = emit every depth update
 
 TIME_RANGE:
   start_date: "2024-01-01"

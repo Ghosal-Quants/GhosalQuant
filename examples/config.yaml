@@ -23,6 +23,8 @@ SYSTEM:
 # ------------------------------------------------
 DATA:
   source: "yfinance" # Options: "polygon", "yfinance", "live_ibkr"
+  # Which market events the source yields: "bars" (default), plus "order_books" and "trades" for live_ibkr.
+  events: ["bars"]
   # Only the section specified in the "source" field will be used. The other section will be ignored.
   polygon:
     api_key: "API_KEY"
@@ -35,6 +37,8 @@ DATA:
   #   port: 7497
   #   client_id: 2
   #   bar_resolution_sec: 1
+  #   depth: 5                 # market-depth rows per side when events includes "order_books"
+  #   book_resolution_sec: 0   # emit at most one OrderBook per symbol this often (0 = every update)
 
 # ------------------------------------------------
 # Test Period and Range

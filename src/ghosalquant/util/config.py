@@ -44,6 +44,8 @@ class LiveIBKRConfig:
     port: int = 7497
     client_id: int = 2
     bar_resolution_sec: int = 1
+    depth: int | None = None
+    book_resolution_sec: float = 0.0
 
 @dataclass(frozen=True, slots=True)
 class LivePolygonConfig:
@@ -55,12 +57,16 @@ class DataSrcType(str, Enum):
     LIVE_IBKR = 'live_ibkr'
     POLYGON = 'polygon'
 
+MARKET_EVENT_KINDS = ("bars", "order_books", "trades")
+
+
 @dataclass(frozen=True, slots=True)
 class DataConfig:
     source: DataSrcType
     yfinance: YFinanceConfig | None = None
     polygon: PolygonConfig | None = None
     live_ibkr: LiveIBKRConfig | None = None
+    events: tuple[str, ...] = ("bars",)
 
 @dataclass(frozen=True, slots=True)
 class TimeConfig:
@@ -182,12 +188,35 @@ def _parse_ibkr_broker_config(raw: Any) -> IBKRBrokerConfig:
 
 def _parse_live_ibkr_config(raw: Any) -> LiveIBKRConfig:
     live_ibkr_raw = _assert_map(raw, "DATA.live_ibkr")
+    depth_raw = live_ibkr_raw.get("depth")
+    depth = None if depth_raw is None else int(depth_raw)
+    if depth is not None and depth <= 0:
+        raise ConfigError("DATA.live_ibkr.depth must be a positive integer.")
     return LiveIBKRConfig(
         host=str(live_ibkr_raw.get("host", "127.0.0.1")),
         port=int(live_ibkr_raw.get("port", 7497)),
         client_id=int(live_ibkr_raw.get("client_id", 2)),
         bar_resolution_sec=int(live_ibkr_raw.get("bar_resolution_sec", 1)),
+        depth=depth,
+        book_resolution_sec=float(live_ibkr_raw.get("book_resolution_sec", 0.0)),
     )
+
+
+def _parse_event_kinds(raw: Any) -> tuple[str, ...]:
+    if raw is None:
+        return ("bars",)
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, list) or not raw:
+        raise ConfigError("DATA.events must be a non-empty string or list of strings.")
+    kinds: list[str] = []
+    for item in raw:
+        kind = _assert_str(item, "DATA.events").strip().lower()
+        if kind not in MARKET_EVENT_KINDS:
+            raise ConfigError(f"DATA.events entries must be one of {list(MARKET_EVENT_KINDS)}. Got: {kind}")
+        if kind not in kinds:
+            kinds.append(kind)
+    return tuple(kinds)
 
 
 def _default_broker_config() -> BrokerConfig:
@@ -302,6 +331,7 @@ def load_config(file_path: str | Path) -> Config:
             yfinance=yfinance_cfg,
             polygon=polygon_cfg,
             live_ibkr=live_ibkr_cfg,
+            events=_parse_event_kinds(data_raw.get("events")),
         )
 
         # ----- Time ----- #
