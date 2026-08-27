@@ -325,6 +325,7 @@ class Fill:
 
     order_id: str | None = None
     broker_order_id: str | None = None  # For things like IBKR IDs
+    execution_id: str | None = None  # The venue's id for this execution, unique and stable
     commission: float | None = None
     liquidity: Liquidity | None = None
 

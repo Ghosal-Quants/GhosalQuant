@@ -576,7 +576,13 @@ class Portfolio(Protocol):
 ### 8.1 `BasicPortfolio`
 The default implementation (`ghosalquant.portfolio.basic_portfolio`). Key behaviours:
 - **`process_fill(fill)`**: Opens a trade on `BUY` fills (deducting cash for notional + commission) and closes trades
-  on `SELL` fills using LIFO order. Supports partial closes.
+  on `SELL` fills using LIFO order. Supports partial closes. A fill carrying an `execution_id` is applied once and
+  only once — a venue can report the same execution twice, and applying it again invents a position the account
+  never held. Fills without one (a simulated broker has none) are applied as before.
+- **`adopt(cash, positions)`**: Start from what the account actually holds instead of from `init_capital`. A live
+  session inherits cash and positions this process did not create, and every capital-aware risk rule sizes from
+  equity, so starting flat means sizing against a number nobody chose. Must be called before any fills.
+  `IBKRBroker.account_snapshot()` returns exactly what it takes.
 - **`mark(symbol, price, time_stamp)`**: Updates the last known price for a symbol without recording an
   `EquityPoint`; the `ExecutionSystem` decides when a snapshot is due.
 - **`update_equity(bar)`**: `mark(...)` followed by a snapshot (an `EquityPoint` per bar).
@@ -711,9 +717,18 @@ or Gateway. Supports:
   that cannot report — so without this they were blind live.
 - Commission taken from IB's `commissionReport` rather than left empty.
 
-What it still does not do: nothing survives a restart, and a fill is gone if the process dies between `get_fills`
-returning it and the portfolio applying it. Closing that needs the portfolio to apply fills idempotently by
-execution id, which a broker cannot do alone.
+- `account_snapshot()` returns cash and positions shaped for `BasicPortfolio.adopt`, so a live session starts from
+  what the account holds rather than from `init_capital`.
+
+Set `state_path` and two more things survive a restart. Submitted orders are kept, so a resting order still reports
+the metadata its strategy set — without it the cash-allocation buckets and `order_slot` matching quietly stop
+working. And an order is written down *before* it is sent, so an acknowledgement lost to a timeout leaves a record:
+`indeterminate_orders()` reports it on the next start rather than the order being forgotten or blindly resent.
+Because IB order ids restart with the session, a stored order is only trusted when it still describes what the
+venue is reporting.
+
+What it still does not do: resolve those indeterminate orders for you. Deciding whether one reached the venue means
+comparing against `open_order_views` and the account's executions, and getting it wrong sends the order twice.
 
 ### 9.5 Broker Builder
 `build_broker(broker_config)` in `ghosalquant.brokerage.builder` constructs a `SimBroker` or `IBKRBroker` from a

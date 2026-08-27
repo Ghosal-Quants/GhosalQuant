@@ -1,5 +1,7 @@
 from datetime import datetime, timezone
-from typing import Iterable
+from pathlib import Path
+from typing import Any, Iterable, Mapping
+import hashlib
 import logging
 
 from ib_insync import (
@@ -15,7 +17,9 @@ from ib_insync import (
 )
 
 from .broker_base import Broker
-from ..core.types import Fill, OpenOrderView, Order, SignalType
+from ..core import metadata_keys
+from ..core.types import Fill, Liquidity, OpenOrderView, Order, SignalType
+from ..state.json_store import StateCodec, VersionedJsonStateStore
 from ..util.config import BrokerMode
 
 logger = logging.getLogger(__name__)
@@ -33,6 +37,13 @@ class IBKRBroker(Broker):
     Executions are also deduplicated by ``execId`` here. ``ib_insync`` already does this inside
     its wrapper, so this is a second line of defence over behaviour that is not part of its
     documented contract, not a fix for anything observed.
+
+    With ``state_path`` set the broker survives a restart in two ways. Submitted orders are kept,
+    so a resting order still reports the metadata its strategy set rather than a reconstruction —
+    without it the cash-allocation buckets and ``order_slot`` matching quietly stop working. And
+    an order is written down *before* it is sent, so an acknowledgement lost to a timeout leaves a
+    record behind: ``indeterminate_orders()`` reports it on the next start instead of the order
+    being forgotten or blindly sent again.
     """
 
     def __init__(
@@ -44,7 +55,8 @@ class IBKRBroker(Broker):
             connect_timeout_s: float = 5.0,
             handshake_timeout_s: float = 5.0,
             # Default to sending stock order to SMART
-            contract_overrides: Iterable[Contract] | None = None
+            contract_overrides: Iterable[Contract] | None = None,
+            state_path: str | Path | None = None,
     ) -> None:
         super().__init__()
         self.ib = IB()
@@ -58,10 +70,18 @@ class IBKRBroker(Broker):
         # lookup for contract overrides
         self.contract_map = {c.symbol: c for c in (contract_overrides or [])}
 
+        self._store = (
+            None if state_path is None
+            else VersionedJsonStateStore(
+                state_path, codec=StateCodec(to_dict=dict, from_dict=dict), schema_version=1
+            )
+        )
         self._seen_exec_ids: set[str] = set()
         self._orders_by_id: dict[str, Order] = {}
+        self._pending: dict[str, dict[str, Any]] = {}
         self._fill_queue: list[Fill] = []
         self._events_wired = False
+        self._restore()
 
     # ----- Managing Connection ----- #
     async def connect(self) -> None:
@@ -98,14 +118,54 @@ class IBKRBroker(Broker):
         else:
             ib_order = LimitOrder(action, float(order.quantity), float(limit))
 
-        trade: IBTrade = self.ib.placeOrder(contract, ib_order)
+        # Written down before the network call: a lost acknowledgement then leaves a known
+        # unknown rather than a forgotten order.
+        key = _idempotency_key(order)
+        self._pending[key] = _as_payload(order)
+        self._save()
+
+        try:
+            trade: IBTrade = self.ib.placeOrder(contract, ib_order)
+        except Exception:
+            # The venue may or may not have it. Leave the record for the next start to report.
+            logger.exception("IBKRBroker could not confirm submission of %s", order.symbol)
+            raise
+
         order_id = getattr(trade.order, "orderId", None)
+        self._pending.pop(key, None)
         if not order_id:
+            self._save()
             return None
         broker_order_id = str(order_id)
         # Kept so a resting order reports the metadata the strategy set, not a reconstruction.
         self._orders_by_id[broker_order_id] = order
+        self._save()
         return broker_order_id
+
+    def indeterminate_orders(self) -> tuple[Order, ...]:
+        """
+        Orders written down but never acknowledged, from this run or a previous one.
+
+        Each may or may not be live at the venue. Resolve them against ``open_order_views`` and
+        the account's executions before trading; resending blind is how one order becomes two.
+        """
+        return tuple(_from_payload(payload) for payload in self._pending.values())
+
+    def account_snapshot(self) -> tuple[float, dict[str, tuple[float, float]]]:
+        """Cash and open positions as IB reports them, shaped for ``BasicPortfolio.adopt``."""
+        cash = 0.0
+        for value in self.ib.accountValues():
+            if getattr(value, "tag", None) == "TotalCashValue":
+                cash = float(getattr(value, "value", 0.0) or 0.0)
+                break
+        positions = {}
+        for position in self.ib.positions():
+            quantity = float(getattr(position, "position", 0.0) or 0.0)
+            if quantity <= 0.0:
+                continue
+            symbol = getattr(getattr(position, "contract", None), "symbol", None) or "UNKNOWN"
+            positions[symbol] = (quantity, float(getattr(position, "avgCost", 0.0) or 0.0))
+        return cash, positions
 
     def get_fills(self) -> list[Fill]:
         fills, self._fill_queue = self._fill_queue, []
@@ -174,14 +234,39 @@ class IBKRBroker(Broker):
                 quantity=float(getattr(execution, "shares", 0.0)),
                 price=float(getattr(execution, "price", 0.0)),
                 broker_order_id=str(getattr(execution, "orderId", "")) or None,
+                execution_id=exec_id or None,
                 commission=_commission(fill),
             )
         )
 
+    def _restore(self) -> None:
+        if self._store is None:
+            return
+        stored = self._store.load() or {}
+        self._pending = {
+            str(key): dict(payload) for key, payload in (stored.get("pending") or {}).items()
+        }
+        self._orders_by_id = {
+            str(order_id): _from_payload(payload)
+            for order_id, payload in (stored.get("orders") or {}).items()
+        }
+
+    def _save(self) -> None:
+        if self._store is None:
+            return
+        self._store.save({
+            "pending": self._pending,
+            "orders": {
+                order_id: _as_payload(order) for order_id, order in self._orders_by_id.items()
+            },
+        })
+
     def _order_for(self, trade: IBTrade, symbol: str, remaining: float) -> Order:
         """The order we submitted, or one rebuilt from IB for anything this process did not place."""
         known = self._orders_by_id.get(str(getattr(trade.order, "orderId", "") or ""))
-        if known is not None:
+        # IB order ids restart with the session, so only trust a stored one that still describes
+        # what the venue reports.
+        if known is not None and _describes(known, trade, symbol):
             return known
         limit = _limit_price(trade)
         return Order(
@@ -192,6 +277,51 @@ class IBKRBroker(Broker):
             ref_price=limit if limit else 0.0,
             limit_price=limit,
         )
+
+
+def _describes(order: Order, trade: IBTrade, symbol: str) -> bool:
+    return (
+        order.symbol == symbol
+        and order.side is _side_of(getattr(trade.order, "action", "BUY"))
+        and abs(float(order.quantity) - float(getattr(trade.order, "totalQuantity", 0.0) or 0.0)) < 1e-9
+    )
+
+
+def _idempotency_key(order: Order) -> str:
+    key = (order.metadata or {}).get(metadata_keys.IDEMPOTENCY_KEY)
+    if key is not None:
+        return str(key)
+    return hashlib.sha256(
+        f"{order.time_stamp.isoformat()}\0{order.symbol}\0{order.side.value}\0"
+        f"{order.quantity}\0{order.declared_limit_price}".encode("utf-8")
+    ).hexdigest()
+
+
+def _as_payload(order: Order) -> dict[str, Any]:
+    return {
+        "time_stamp": order.time_stamp.isoformat(),
+        "symbol": order.symbol,
+        "side": order.side.value,
+        "quantity": float(order.quantity),
+        "ref_price": float(order.ref_price),
+        "metadata": dict(order.metadata or {}),
+        "limit_price": order.limit_price,
+        "liquidity": None if order.liquidity is None else order.liquidity.value,
+    }
+
+
+def _from_payload(payload: Mapping[str, Any]) -> Order:
+    liquidity = payload.get("liquidity")
+    return Order(
+        time_stamp=datetime.fromisoformat(str(payload["time_stamp"])),
+        symbol=str(payload["symbol"]),
+        side=SignalType(str(payload["side"])),
+        quantity=float(payload["quantity"]),
+        ref_price=float(payload["ref_price"]),
+        metadata=dict(payload.get("metadata") or {}),
+        limit_price=payload.get("limit_price"),
+        liquidity=None if liquidity is None else Liquidity(str(liquidity)),
+    )
 
 
 def _commission(fill: IBFill) -> float | None:

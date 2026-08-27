@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Iterable
+from typing import Iterable, Mapping
 
 from ..core.types import Trade, EquityPoint, Fill, SignalType, Bar
 from ..portfolio.portfolio_base import Portfolio
@@ -31,8 +31,54 @@ class BasicPortfolio(Portfolio):
         self._accounting_version: int = 0
         self._open_cost_by_symbol: dict[str, float] = {}
         self._open_qty_by_symbol: dict[str, float] = {}
+        self._applied_execution_ids: set[str] = set()
+
+    def adopt(
+            self,
+            cash: float,
+            positions: Mapping[str, tuple[float, float]] | None = None,
+            *,
+            time_stamp: datetime | None = None,
+    ) -> None:
+        """
+        Start from what the account actually holds instead of from ``init_capital``.
+
+        A live session inherits cash and positions that this process did not create, and every
+        capital-aware risk rule sizes from equity. Starting flat means sizing against a number
+        nobody chose. ``positions`` maps a symbol to its quantity and average entry price.
+        """
+        if self._closed_trades or any(self._open_trades.values()):
+            raise RuntimeError("adopt() must be called before any fills are processed")
+        self._cash = float(cash)
+        for symbol, (quantity, entry_price) in (positions or {}).items():
+            if quantity <= 0.0:
+                continue
+            self._record_open_trade(
+                Trade(
+                    id=self._take_trade_id(),
+                    symbol=str(symbol),
+                    signal_type=SignalType.BUY,
+                    entry_price=float(entry_price),
+                    size=float(quantity),
+                    open_time=time_stamp or datetime.now(),
+                )
+            )
+            self._last_prices[symbol] = float(entry_price)
+        # Without a snapshot, current_equity still answers with the init_capital being replaced.
+        self.snapshot_equity(
+            time_stamp=time_stamp or datetime.now(), prices=self._last_prices
+        )
+        self._init_capital = self.current_equity
+        self._peak_equity = self._init_capital
+        self._accounting_version += 1
 
     async def process_fill(self, fill: Fill) -> None:
+        # Applying one execution twice invents a position the account never held.
+        if fill.execution_id is not None:
+            if fill.execution_id in self._applied_execution_ids:
+                return
+            self._applied_execution_ids.add(fill.execution_id)
+
         cash_before = self._cash
         quantity_before = self.open_qty_by_symbol.get(fill.symbol, 0.0)
         # A new lot must be marked from the fill that created it, not from a
@@ -188,8 +234,7 @@ class BasicPortfolio(Portfolio):
         self._fees_paid += commission
         self._realised_pnl -= commission
 
-        trade_id: int = self._next_trade_id
-        self._next_trade_id += 1
+        trade_id: int = self._take_trade_id()
 
         trade = Trade(
             id=trade_id,
@@ -199,13 +244,21 @@ class BasicPortfolio(Portfolio):
             size=fill.quantity,
             open_time=fill.time_stamp,
         )
-        self._open_trades.setdefault(fill.symbol, {})[trade_id] = trade
-        self._open_qty_by_symbol[fill.symbol] = (
-            self._open_qty_by_symbol.get(fill.symbol, 0.0)
-            + float(fill.quantity)
+        self._record_open_trade(trade, notional=notional)
+
+    def _take_trade_id(self) -> int:
+        trade_id = self._next_trade_id
+        self._next_trade_id += 1
+        return trade_id
+
+    def _record_open_trade(self, trade: Trade, *, notional: float | None = None) -> None:
+        cost = trade.entry_price * trade.size if notional is None else notional
+        self._open_trades.setdefault(trade.symbol, {})[trade.id] = trade
+        self._open_qty_by_symbol[trade.symbol] = (
+            self._open_qty_by_symbol.get(trade.symbol, 0.0) + float(trade.size)
         )
-        self._open_cost_by_symbol[fill.symbol] = (
-            self._open_cost_by_symbol.get(fill.symbol, 0.0) + notional
+        self._open_cost_by_symbol[trade.symbol] = (
+            self._open_cost_by_symbol.get(trade.symbol, 0.0) + cost
         )
 
     def _close(self, fill: Fill) -> None:

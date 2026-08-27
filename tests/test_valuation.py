@@ -360,3 +360,70 @@ def test_attaching_the_engine_to_a_bar_run_changes_nothing():
     snapshot = engine.last_snapshot
     assert snapshot.risk_equity > 0.0
     assert snapshot.basis_counts[ValuationBasis.MARKED] == len(snapshot.symbols)
+
+
+# ----- Starting from what the account actually holds ----- #
+
+_ADOPT_T0 = datetime(2026, 7, 1, 14, 30)
+
+
+def test_a_portfolio_can_start_from_real_cash_and_positions():
+    portfolio = BasicPortfolio(init_capital=10_000.0)
+
+    portfolio.adopt(25_000.0, {"AAPL": (10.0, 99.0)}, time_stamp=_ADOPT_T0)
+
+    assert portfolio.cash_balance == 25_000.0
+    assert portfolio.open_qty_by_symbol == {"AAPL": 10.0}
+    assert portfolio.open_cost_by_symbol["AAPL"] == pytest.approx(990.0)
+    # Equity, peak and the drawdown baseline all start from the real account.
+    assert portfolio.current_equity == pytest.approx(25_990.0)
+    assert portfolio.peak_equity == pytest.approx(25_990.0)
+
+
+def test_an_adopted_position_can_be_sold():
+    portfolio = BasicPortfolio(init_capital=0.0)
+    portfolio.adopt(1_000.0, {"AAPL": (10.0, 99.0)}, time_stamp=_ADOPT_T0)
+
+    asyncio.run(portfolio.process_fill(Fill(
+        time_stamp=_ADOPT_T0, symbol="AAPL", side=SignalType.SELL, quantity=10.0, price=101.0,
+    )))
+
+    assert portfolio.open_qty_by_symbol.get("AAPL", 0.0) == 0.0
+    assert portfolio.realised_pnl == pytest.approx(20.0)
+
+
+def test_adopting_after_trading_has_started_is_refused():
+    portfolio = BasicPortfolio(init_capital=10_000.0)
+    asyncio.run(portfolio.process_fill(Fill(
+        time_stamp=_ADOPT_T0, symbol="AAPL", side=SignalType.BUY, quantity=1.0, price=100.0,
+    )))
+
+    with pytest.raises(RuntimeError):
+        portfolio.adopt(25_000.0)
+
+
+# ----- An execution is applied once ----- #
+
+def test_the_same_execution_delivered_twice_is_applied_once():
+    portfolio = BasicPortfolio(init_capital=10_000.0)
+    fill = Fill(
+        time_stamp=_ADOPT_T0, symbol="AAPL", side=SignalType.BUY, quantity=5.0, price=100.0,
+        execution_id="e1",
+    )
+
+    asyncio.run(portfolio.process_fill(fill))
+    asyncio.run(portfolio.process_fill(fill))
+
+    assert portfolio.open_qty_by_symbol["AAPL"] == 5.0
+    assert portfolio.cash_balance == pytest.approx(9_500.0)
+
+
+def test_fills_without_an_execution_id_are_still_applied():
+    portfolio = BasicPortfolio(init_capital=10_000.0)
+    fill = Fill(time_stamp=_ADOPT_T0, symbol="AAPL", side=SignalType.BUY, quantity=5.0, price=100.0)
+
+    asyncio.run(portfolio.process_fill(fill))
+    asyncio.run(portfolio.process_fill(fill))
+
+    # A simulated broker has no execution ids and must keep working unchanged.
+    assert portfolio.open_qty_by_symbol["AAPL"] == 10.0

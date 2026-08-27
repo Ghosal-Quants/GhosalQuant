@@ -1,3 +1,4 @@
+import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
@@ -6,7 +7,21 @@ import pytest
 from ghosalquant.brokerage import ibkr
 from ghosalquant.brokerage.ibkr import IBKRBroker
 from ghosalquant.brokerage.open_orders import OpenOrderQueries
-from ghosalquant.core.types import Order, SignalType
+from ghosalquant.core import metadata_keys
+from ghosalquant.core.types import BookLevel, Order, OrderBook, Signal, SignalType
+from ghosalquant.data_layer.list_datasource import ListDataSource
+from ghosalquant.execution.execution_system import ExecutionSystem
+from ghosalquant.execution.strategy_base import OrderBookStrategy
+from ghosalquant.portfolio.basic_portfolio import BasicPortfolio
+from ghosalquant.risk import (
+    CashAllocationConfig,
+    CashAllocationRule,
+    IntegerQuantity,
+    MaxSymbolExposure,
+    OrderDraft,
+    RiskManager,
+    SymbolCapitalFractionSizer,
+)
 
 T0 = datetime(2026, 6, 1, 14, 30, tzinfo=timezone.utc)
 
@@ -64,6 +79,20 @@ class FakeFill:
     time: datetime
 
 
+
+@dataclass
+class FakeAccountValue:
+    tag: str
+    value: str
+
+
+@dataclass
+class FakePosition:
+    contract: FakeContract
+    position: float
+    avgCost: float
+
+
 class FakeEvent:
     def __init__(self) -> None:
         self.handlers = []
@@ -81,10 +110,25 @@ class FakeIB:
         self.open_trades: list[FakeIBTrade] = []
         self.cancelled: list[int] = []
         self.placed: list[tuple] = []
+        self.account_values: list[FakeAccountValue] = []
+        self.account_positions: list[FakePosition] = []
+        self.connected = True
         self._next_order_id = 100
 
     def isConnected(self) -> bool:
-        return True
+        return self.connected
+
+    async def connectAsync(self, host=None, port=None, clientId=None) -> None:
+        self.connected = True
+
+    def disconnect(self) -> None:
+        self.connected = False
+
+    def accountValues(self) -> list[FakeAccountValue]:
+        return list(self.account_values)
+
+    def positions(self) -> list[FakePosition]:
+        return list(self.account_positions)
 
     def openTrades(self) -> list[FakeIBTrade]:
         return list(self.open_trades)
@@ -94,9 +138,16 @@ class FakeIB:
 
     def placeOrder(self, contract, ib_order) -> FakeIBTrade:
         self._next_order_id += 1
-        placed = FakeIBOrder(orderId=self._next_order_id, action=ib_order.action)
+        # Carries the real quantity and limit: the broker checks a stored order still describes
+        # what the venue reports, so a fake that drops them hides that check.
+        placed = FakeIBOrder(
+            orderId=self._next_order_id,
+            action=ib_order.action,
+            totalQuantity=float(ib_order.totalQuantity),
+            lmtPrice=float(getattr(ib_order, "lmtPrice", 0.0) or 0.0),
+        )
         self.placed.append((contract, ib_order))
-        trade = FakeIBTrade(contract=contract, order=placed)
+        trade = FakeIBTrade(contract=contract, order=placed, _remaining=float(ib_order.totalQuantity))
         self.open_trades.append(trade)
         return trade
 
@@ -120,6 +171,38 @@ def execution(exec_id: str, *, order_id: int = 101, shares: float = 5.0, price: 
 
 def deliver(broker: IBKRBroker, fill: FakeFill) -> None:
     broker._on_exec_details(None, fill)
+
+
+def _book(seconds: int, price: float = 100.0, symbol: str = "AAPL") -> OrderBook:
+    return OrderBook(
+        time_stamp=T0 + timedelta(seconds=seconds), symbol=symbol,
+        bids=(BookLevel(price, 500.0),), asks=(BookLevel(price + 0.02, 500.0),),
+    )
+
+
+class _Quoter(OrderBookStrategy):
+    """Bids on every book, tagging the order so the cash buckets can see it."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.accepted: list = []
+
+    def on_start(self) -> None: ...
+
+    def on_end(self) -> None: ...
+
+    def on_order_book(self, book, context=None):
+        if book.best_bid is None:
+            return None
+        return Signal(
+            time_stamp=book.time_stamp, symbol=book.symbol, signal_type=SignalType.BUY,
+            ref_price=book.best_bid.price, confidence=1.0, quantity=1.0,
+            limit_price=book.best_bid.price,
+            metadata={metadata_keys.ALLOCATION_BUCKET: "ladder"},
+        )
+
+    def on_order_accepted(self, order, broker_order_id) -> None:
+        self.accepted.append((order, broker_order_id))
 
 
 # ----- Executions are counted once ----- #
@@ -234,3 +317,196 @@ def test_submitting_without_a_connection_is_refused(fake_ib, monkeypatch):
 
     with pytest.raises(RuntimeError):
         broker.submit(Order(time_stamp=T0, symbol="AAPL", side=SignalType.BUY, quantity=1.0, ref_price=1.0))
+
+
+# ----- Surviving a restart ----- #
+
+def test_a_resting_order_keeps_its_strategy_metadata_across_a_restart(tmp_path, fake_ib):
+    state = tmp_path / "ibkr.json"
+    broker = IBKRBroker(state_path=state)
+    submitted = Order(
+        time_stamp=T0, symbol="AAPL", side=SignalType.BUY, quantity=10.0, ref_price=99.5,
+        limit_price=99.5, metadata={"order_slot": "ladder-1", "allocation_bucket": "ladder"},
+    )
+    broker.submit(submitted)
+
+    # A new process; IB still reports the order as working.
+    restarted = IBKRBroker(state_path=state)
+    view = restarted.open_order_views("AAPL")[0]
+
+    assert view.order.metadata["order_slot"] == "ladder-1"
+    assert view.order.metadata["allocation_bucket"] == "ladder"
+
+
+def test_without_a_state_path_the_metadata_is_lost_and_the_order_is_rebuilt(tmp_path, fake_ib):
+    broker = IBKRBroker()
+    broker.submit(Order(
+        time_stamp=T0, symbol="AAPL", side=SignalType.BUY, quantity=10.0, ref_price=99.5,
+        limit_price=99.5, metadata={"order_slot": "ladder-1"},
+    ))
+
+    restarted = IBKRBroker()
+    view = restarted.open_order_views("AAPL")[0]
+
+    # Which is why state_path matters once the cash rules are counting buckets.
+    assert view.order.metadata in (None, {})
+
+
+def test_a_stored_order_is_ignored_when_it_does_not_describe_what_the_venue_reports(tmp_path, fake_ib):
+    state = tmp_path / "ibkr.json"
+    broker = IBKRBroker(state_path=state)
+    broker.submit(Order(
+        time_stamp=T0, symbol="AAPL", side=SignalType.BUY, quantity=10.0, ref_price=99.5,
+        limit_price=99.5, metadata={"order_slot": "ladder-1"},
+    ))
+    reused_id = fake_ib.open_trades[0].order.orderId
+
+    # IB order ids restart with the session: the same id, a different order.
+    fake_ib.open_trades = [
+        FakeIBTrade(FakeContract("MSFT"), FakeIBOrder(reused_id, "SELL", 4.0, 50.0), _remaining=4.0)
+    ]
+    restarted = IBKRBroker(state_path=state)
+    view = restarted.open_order_views("MSFT")[0]
+
+    assert view.order.symbol == "MSFT"
+    assert view.order.side is SignalType.SELL
+    assert view.order.metadata in (None, {})
+
+
+# ----- An order is written down before it is sent ----- #
+
+def test_an_order_lost_to_a_timeout_is_reported_rather_than_forgotten(tmp_path, fake_ib, monkeypatch):
+    state = tmp_path / "ibkr.json"
+    broker = IBKRBroker(state_path=state)
+
+    def timeout(*_args, **_kwargs):
+        raise TimeoutError("no acknowledgement")
+
+    monkeypatch.setattr(fake_ib, "placeOrder", timeout)
+    with pytest.raises(TimeoutError):
+        broker.submit(Order(
+            time_stamp=T0, symbol="AAPL", side=SignalType.BUY, quantity=10.0, ref_price=99.5,
+            limit_price=99.5,
+        ))
+
+    # It may or may not be live at the venue, so the next start is told about it.
+    restarted = IBKRBroker(state_path=state)
+    indeterminate = restarted.indeterminate_orders()
+    assert len(indeterminate) == 1
+    assert indeterminate[0].symbol == "AAPL"
+    assert indeterminate[0].quantity == 10.0
+
+
+def test_an_acknowledged_order_leaves_nothing_indeterminate(tmp_path, fake_ib):
+    state = tmp_path / "ibkr.json"
+    broker = IBKRBroker(state_path=state)
+    broker.submit(Order(
+        time_stamp=T0, symbol="AAPL", side=SignalType.BUY, quantity=10.0, ref_price=99.5,
+        limit_price=99.5,
+    ))
+
+    assert broker.indeterminate_orders() == ()
+    assert IBKRBroker(state_path=state).indeterminate_orders() == ()
+
+
+def test_a_fill_carries_the_execution_id_behind_it(fake_ib):
+    broker = IBKRBroker()
+
+    deliver(broker, execution("e1"))
+
+    assert broker.get_fills()[0].execution_id == "e1"
+
+
+# ----- What the account actually holds ----- #
+
+def test_the_account_snapshot_is_shaped_for_the_portfolio(fake_ib):
+    fake_ib.account_values = [FakeAccountValue("TotalCashValue", "25000.50")]
+    fake_ib.account_positions = [
+        FakePosition(FakeContract("AAPL"), 10.0, 99.0),
+        FakePosition(FakeContract("MSFT"), 0.0, 50.0),
+    ]
+    broker = IBKRBroker()
+
+    cash, positions = broker.account_snapshot()
+
+    assert cash == 25000.50
+    assert positions == {"AAPL": (10.0, 99.0)}
+
+
+# ----- The whole live path, wired together ----- #
+
+def test_a_live_session_adopts_the_account_and_sizes_against_it(tmp_path, fake_ib):
+    """
+    The chain the capital-aware rules depend on: broker snapshot -> portfolio -> RiskContext.
+
+    Each link is unit tested above; this is the one that catches them not being connected.
+    """
+    fake_ib.account_values = [FakeAccountValue("TotalCashValue", "50000")]
+    fake_ib.account_positions = [FakePosition(FakeContract("AAPL"), 20.0, 95.0)]
+    broker = IBKRBroker(state_path=tmp_path / "ibkr.json")
+
+    cash, positions = broker.account_snapshot()
+    portfolio = BasicPortfolio(init_capital=1.0)
+    portfolio.adopt(cash, positions, time_stamp=T0)
+    assert portfolio.current_equity == pytest.approx(50_000.0 + 20 * 95.0)
+
+    strategy = _Quoter()
+    system = ExecutionSystem(
+        ListDataSource([_book(second) for second in range(3)]), strategy,
+        portfolio=portfolio,
+        risk_manager=RiskManager(rules=[
+            SymbolCapitalFractionSizer(capital=51_900.0, default_max_notional_fraction=0.10),
+            MaxSymbolExposure(capital=51_900.0, max_notional_fraction=0.10),
+            CashAllocationRule(
+                CashAllocationConfig(total_fraction=0.5, max_symbol_fraction=0.2),
+                capital=51_900.0,
+            ),
+            IntegerQuantity(),
+        ]),
+        broker=broker,
+    )
+    asyncio.run(system.run())
+
+    # The inherited position is now marked at the book mid rather than its entry cost.
+    assert portfolio.current_equity == pytest.approx(50_000.0 + 20 * 100.01)
+    assert strategy.accepted, "the strategy should have had orders accepted"
+
+    context = system._build_risk_context()
+    assert context.current_equity is not None
+    assert len(context.open_orders) == len(broker.open_order_views("AAPL"))
+    assert all(
+        (view.order.metadata or {}).get(metadata_keys.ALLOCATION_BUCKET) == "ladder"
+        for view in context.open_orders
+    )
+
+    # The exposure rule counts the resting bids on top of the inherited position.
+    draft = OrderDraft(
+        time_stamp=T0, symbol="AAPL", side=SignalType.BUY, quantity=100.0, price=100.0
+    )
+    MaxSymbolExposure(capital=51_900.0, max_notional_fraction=0.10).apply(draft, context)
+    assert draft.metadata["symbol_exposure_committed_notional"] > 20 * 95.0
+
+
+def test_an_execution_moves_the_position_once_through_the_whole_chain(tmp_path, fake_ib):
+    portfolio = BasicPortfolio(init_capital=10_000.0)
+    broker = IBKRBroker()
+    broker.submit(Order(
+        time_stamp=T0, symbol="AAPL", side=SignalType.BUY, quantity=5.0, ref_price=100.0,
+        limit_price=100.0,
+    ))
+    reported = execution("X1", shares=2.0)
+
+    deliver(broker, reported)
+    deliver(broker, reported)
+    for fill in broker.get_fills():
+        asyncio.run(portfolio.process_fill(fill))
+    once = portfolio.open_qty_by_symbol.get("AAPL", 0.0)
+
+    # And again with a broker that has forgotten: the portfolio still refuses it.
+    broker._seen_exec_ids.clear()
+    deliver(broker, reported)
+    for fill in broker.get_fills():
+        asyncio.run(portfolio.process_fill(fill))
+
+    assert once == 2.0
+    assert portfolio.open_qty_by_symbol.get("AAPL", 0.0) == 2.0
