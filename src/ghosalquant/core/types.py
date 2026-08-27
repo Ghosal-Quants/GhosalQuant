@@ -385,10 +385,21 @@ class BacktestKPMs:
     unrealised_pnl: float
     total_pnl: float
 
-    def as_dict(self) -> dict[str, float | int]:
+    # Risk-adjusted metrics; None when the equity path cannot support them.
+    max_drawdown: float | None = None
+    annualized_return_pct: float | None = None
+    return_volatility_pct: float | None = None
+    downside_volatility_pct: float | None = None
+    sharpe_ratio: float | None = None
+    sortino_ratio: float | None = None
+    calmar_ratio: float | None = None
+
+    def as_dict(self) -> dict[str, float | int | None]:
         return asdict(self)
 
     def __str__(self) -> str:
+        from ..metrics.risk_adjusted import format_metric
+
         return (
             f"Total Trades: {self.total_trades},\n"
             +f"Total Wins: {self.total_wins},\n"
@@ -396,7 +407,12 @@ class BacktestKPMs:
             +f"Win Rate (%): {self.win_rate_pct:.2f},\n"
             +f"Realised pnl: {self.realised_pnl:.2f},\n"
             +f"Unrealised pnl: {self.unrealised_pnl:.2f},\n"
-            +f"Total pnl: {self.total_pnl:.2f}"
+            +f"Total pnl: {self.total_pnl:.2f},\n"
+            +f"Max drawdown (%): {format_metric(None if self.max_drawdown is None else self.max_drawdown * 100.0)},\n"
+            +f"Annualised return (%): {format_metric(self.annualized_return_pct)},\n"
+            +f"Sharpe: {format_metric(self.sharpe_ratio)},\n"
+            +f"Sortino: {format_metric(self.sortino_ratio)},\n"
+            +f"Calmar: {format_metric(self.calmar_ratio)}"
         )
 
     def __repr__(self) -> str:

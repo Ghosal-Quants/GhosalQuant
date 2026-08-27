@@ -3,6 +3,7 @@ from datetime import datetime
 from pathlib import Path
 
 from ..core.types import BacktestKPMs, SignalType
+from ..metrics.risk_adjusted import risk_adjusted_metrics
 from ..portfolio.portfolio_base import Portfolio
 from ..util.deprecation import deprecated
 
@@ -71,7 +72,7 @@ def calculate_stats(df_results: pd.DataFrame) -> BacktestKPMs:
     return stats
 
 
-def calculate_kpms(portfolio: Portfolio) -> BacktestKPMs:
+def calculate_kpms(portfolio: Portfolio, *, risk_free_rate: float = 0.0) -> BacktestKPMs:
     trades = list(portfolio.closed_trades)
     total_trades = len(trades)
 
@@ -88,6 +89,13 @@ def calculate_kpms(portfolio: Portfolio) -> BacktestKPMs:
     else:
         win_rate = 0.0
 
+    curve = list(portfolio.equity_curve)
+    risk = risk_adjusted_metrics(
+        curve,
+        init_capital=curve[0].equity if curve else 0.0,
+        risk_free_rate=risk_free_rate,
+    )
+
     return BacktestKPMs(
         total_trades=total_trades,
         total_wins=wins,
@@ -95,5 +103,12 @@ def calculate_kpms(portfolio: Portfolio) -> BacktestKPMs:
         win_rate_pct=win_rate,
         realised_pnl=portfolio.realised_pnl,
         unrealised_pnl=portfolio.unrealised_pnl,
-        total_pnl=portfolio.total_pnl
+        total_pnl=portfolio.total_pnl,
+        max_drawdown=risk["max_drawdown"],
+        annualized_return_pct=risk["annualized_return_pct"],
+        return_volatility_pct=risk["return_volatility_pct"],
+        downside_volatility_pct=risk["downside_volatility_pct"],
+        sharpe_ratio=risk["sharpe_ratio"],
+        sortino_ratio=risk["sortino_ratio"],
+        calmar_ratio=risk["calmar_ratio"],
     )

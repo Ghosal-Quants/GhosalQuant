@@ -239,6 +239,14 @@ class BacktestKPMs:
     realised_pnl: float
     unrealised_pnl: float
     total_pnl: float
+    # Risk-adjusted metrics, filled in by calculate_kpms; None when the equity path cannot support them.
+    max_drawdown: float | None = None            # negative fraction, -0.2 is 20% below the peak
+    annualized_return_pct: float | None = None
+    return_volatility_pct: float | None = None
+    downside_volatility_pct: float | None = None
+    sharpe_ratio: float | None = None
+    sortino_ratio: float | None = None
+    calmar_ratio: float | None = None
 
 @dataclass(frozen=True, slots=True)
 class EquityPoint:
@@ -469,6 +477,48 @@ A convenience subclass of `Backtester` for when you already have market data in 
 - Attaches a `DataFrameSink` to annotate the DataFrame with signal/confidence/quantity columns.
 - Loads config from a YAML path for symbol info and risk rules.
 - Handles `MultiIndex` column flattening (e.g. from multi-ticker yfinance downloads).
+
+### 7.3 Risk-Adjusted Metrics
+`ghosalquant.metrics.risk_adjusted_metrics(equity_curve, *, init_capital, risk_free_rate=0.0)` returns Sharpe,
+Sortino, Calmar, annualised return, return and downside volatility, and max drawdown. It accepts an iterable of
+`EquityPoint` or a `pandas.DataFrame`, and the curve does not have to be evenly spaced: periods per year are inferred
+from elapsed time, so an event-driven curve annualises correctly. `risk_free_rate` is annual. Ratios that are not
+meaningful for the path (a flat curve, a single point, no losing period) come back as `None` rather than an
+artificial infinity.
+
+`calculate_kpms(portfolio)` calls it, so every backtest reports these alongside win rate and PnL. Also available:
+`max_drawdown(equity)` over any iterable of values and `format_metric(value, fmt)`, which renders `None` and
+non-finite values as `n/a`.
+
+### 7.4 Performance Gates
+`ghosalquant.metrics` also provides a small go/no-go checklist for deciding whether a change is worth promoting.
+A `GateSpec` names a metric, a comparator, and a threshold; both sides may be literals or a `MetricRef` naming metric
+keys (the first present one wins), `offset` requires a margin over the threshold, and `magnitude` compares absolute
+values, which is how drawdowns are compared.
+
+```python
+from ghosalquant.metrics import GateSpec, MetricRef, evaluate_gates, with_winner_concentration
+
+spec = [
+    GateSpec("beats_bnh", MetricRef("strategy_return_pct", "return_pct"), ">=",
+             MetricRef("benchmark_return_pct"), offset=2.0, message="must beat B&H by 2pp"),
+    GateSpec("sharpe", MetricRef("sharpe_ratio"), ">", MetricRef("benchmark_sharpe")),
+    GateSpec("drawdown", MetricRef("max_drawdown"), "<=", MetricRef("benchmark_max_drawdown"),
+             offset=0.05, magnitude=True),
+    GateSpec("enough_trades", MetricRef("closed_trades"), ">=", 30.0),
+    GateSpec("concentration", MetricRef("largest_winner_realised_pnl_share"), "<=", 0.5),
+]
+
+evaluation = evaluate_gates(with_winner_concentration(metrics), spec)
+print(evaluation)              # PASS/FAIL plus a line per check
+evaluation.passed, evaluation.failures
+```
+
+`winner_concentration_shares(metrics)` reports how much of the positive realised PnL came from the best and the best
+two closed trades — the cheapest check against a result that rests on one lucky trade. It reads precomputed shares
+when present, otherwise derives them from `closed_trade_pnls`, and returns infinities when nothing was won so the
+gate fails rather than passing vacuously. `with_winner_concentration(metrics)` returns the mapping with those shares
+added.
 
 ## 8 Portfolio Management
 Portfolio management is defined by the `Portfolio` protocol from `ghosalquant.portfolio.portfolio_base`.

@@ -130,5 +130,6 @@ def run(seed: int = 7, steps: int = 600):
 if __name__ == "__main__":
     strategy, portfolio, kpms = run()
     print(f"\nKEY PERFORMANCE METRICS:\n{kpms}\n")
+    print("(annualised figures extrapolate a ten-minute synthetic sample, so they are huge by construction)")
     print(f"Equity points: {len(list(portfolio.equity_curve))}, fills: {len(strategy.fills)}")
     print(portfolio)

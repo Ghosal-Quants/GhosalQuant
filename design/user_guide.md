@@ -154,7 +154,26 @@ This creates the data source automatically based on whatever is in your config f
 
 ### What you get back
 `backtester.run()` returns a `BacktestKPMs` object with: `total_trades`, `total_wins`, `total_losses`, `win_rate_pct`, 
-`realised_pnl`, `unrealised_pnl`, `total_pnl`.
+`realised_pnl`, `unrealised_pnl`, `total_pnl`, plus the risk-adjusted set — `max_drawdown`, `annualized_return_pct`,
+`return_volatility_pct`, `downside_volatility_pct`, `sharpe_ratio`, `sortino_ratio`, `calmar_ratio`. Ratios the equity
+path cannot support (a flat curve, too few points, no losing period) are `None`.
+
+To score a curve directly, or to gate a change before promoting it:
+
+```python
+from ghosalquant.metrics import GateSpec, MetricRef, evaluate_gates, risk_adjusted_metrics
+
+metrics = risk_adjusted_metrics(backtester.equity_curve, init_capital=10_000.0)
+
+evaluation = evaluate_gates(
+    {**metrics, "benchmark_sharpe": 0.8, "closed_trades": kpms.total_trades},
+    [
+        GateSpec("sharpe", MetricRef("sharpe_ratio"), ">", MetricRef("benchmark_sharpe")),
+        GateSpec("enough_trades", MetricRef("closed_trades"), ">=", 30.0, message="too few trades to trust"),
+    ],
+)
+print(evaluation)
+```
 
 You can also access `backtester.equity_curve`, `backtester.realised_pnl`, `backtester.unrealised_pnl`, etc. after the 
 run.
@@ -277,6 +296,8 @@ example with synthetic books and prints is in `examples/example_order_book_strat
 |---|---|
 | Trade order books / prints | `OrderBookStrategy` + `on_order_book(book, context)` |
 | Simulate resting limit orders | `OrderBookSimBroker` |
+| Sharpe / Sortino / Calmar / drawdown | `risk_adjusted_metrics(...)` (also on `BacktestKPMs`) |
+| Go/no-go check before promoting | `evaluate_gates(metrics, spec)` |
 | Combine several data streams | `merge_datasources(...)` |
 | Backtest with a DataFrame | `DataFrameBacktester` |
 | Backtest from config (auto data) | `Backtester.from_config()` |
