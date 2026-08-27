@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import pytest
 
@@ -23,6 +23,7 @@ from ghosalquant.risk import (
     CashAllocationConfig,
     CashAllocationRule,
     ConfidenceSizer,
+    CorrelationFilter,
     IntegerQuantity,
     MaxOpenPositions,
     MaxSymbolExposure,
@@ -32,6 +33,7 @@ from ghosalquant.risk import (
     SignalQuantityCap,
     SymbolCapitalFractionSizer,
     TickRounding,
+    Window,
     plan_cash_reclamation,
     resting_buy_notional,
     sizing_capital,
@@ -455,3 +457,101 @@ def test_a_sized_order_comes_out_tradable():
 
     assert order.quantity == int(order.quantity)
     assert order.limit_price == 193.37
+
+
+# ----- A rolling window says when it has nothing to say ----- #
+
+def test_a_window_has_no_answer_until_it_has_filled():
+    window = Window(60)
+
+    assert window.required == 60
+    assert window.of([1.0, 2.0, 3.0]) is None
+    assert window.of(None) is None
+    assert len(window.of([float(i) for i in range(60)])) == 60
+
+
+def test_a_window_keeps_only_its_own_size_once_past_it():
+    window = Window(5)
+
+    assert window.of([float(i) for i in range(20)]) == [15.0, 16.0, 17.0, 18.0, 19.0]
+
+
+def test_a_ramp_up_buys_an_earlier_but_weaker_answer():
+    window = Window(60, ramp_up=10)
+
+    assert window.required == 10
+    assert window.of([float(i) for i in range(9)]) is None
+    assert len(window.of([float(i) for i in range(10)])) == 10
+
+
+def test_a_window_that_cannot_mean_anything_is_refused():
+    with pytest.raises(ValueError):
+        Window(0)
+    with pytest.raises(ValueError):
+        Window(10, ramp_up=0)
+    with pytest.raises(ValueError):
+        Window(10, ramp_up=11)
+
+
+# ----- The correlation filter waits for its window ----- #
+
+def _correlated_history(observations: int) -> dict[str, list[float]]:
+    """Two series that move together, so a full window is unambiguously correlated."""
+    return {
+        "NEW": [100.0 + index for index in range(observations)],
+        "AAPL": [50.0 + index * 0.5 for index in range(observations)],
+    }
+
+
+def _correlation_blocked(rule: CorrelationFilter, observations: int) -> bool:
+    context = RiskContext(
+        open_qty_by_symbol={"AAPL": 1.0}, price_history=_correlated_history(observations)
+    )
+    return not rule.apply(draft(symbol="NEW"), context)
+
+
+def test_a_correlation_is_not_acted_on_before_its_window_has_filled():
+    rule = CorrelationFilter(lookback=60, threshold=0.75)
+
+    # Three observations is noise. Acting on it blocks or allows at random.
+    assert _correlation_blocked(rule, 3) is False
+    assert _correlation_blocked(rule, 59) is False
+    assert _correlation_blocked(rule, 60) is True
+
+
+def test_an_explicit_ramp_up_lets_the_filter_act_sooner():
+    rule = CorrelationFilter(lookback=60, threshold=0.75, ramp_up=10)
+
+    assert _correlation_blocked(rule, 9) is False
+    assert _correlation_blocked(rule, 10) is True
+
+
+def test_a_held_symbol_without_enough_history_is_passed_over():
+    rule = CorrelationFilter(lookback=10, threshold=0.75)
+    history = _correlated_history(10)
+    history["THIN"] = [10.0, 11.0, 12.0]
+    context = RiskContext(
+        open_qty_by_symbol={"THIN": 1.0}, price_history=history
+    )
+
+    # No opinion about THIN rather than one drawn from three points.
+    assert rule.apply(draft(symbol="NEW"), context) is True
+
+
+def test_an_uncorrelated_symbol_is_left_alone():
+    rule = CorrelationFilter(lookback=10, threshold=0.75)
+    history = _correlated_history(10)
+    history["AAPL"] = [50.0, 55.0, 51.0, 58.0, 49.0, 60.0, 48.0, 62.0, 47.0, 64.0]
+    context = RiskContext(open_qty_by_symbol={"AAPL": 1.0}, price_history=history)
+
+    assert rule.apply(draft(symbol="NEW"), context) is True
+
+
+def test_a_sell_and_a_flat_book_are_outside_the_filter():
+    rule = CorrelationFilter(lookback=10, threshold=0.75)
+    context = RiskContext(
+        open_qty_by_symbol={"AAPL": 1.0}, price_history=_correlated_history(10)
+    )
+
+    assert rule.apply(draft(symbol="NEW", side=SignalType.SELL), context) is True
+    assert rule.apply(draft(symbol="NEW"), RiskContext(price_history=_correlated_history(10))) is True

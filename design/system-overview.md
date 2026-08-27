@@ -463,7 +463,7 @@ Risk management sits between signal generation and order execution. The `RiskMan
 | `ConfidenceSizer` | Linearly interpolates quantity between `min_quantity` and `max_quantity` based on signal confidence. Blocks the order if the resulting quantity is zero. |
 | `RegimeFilter` | Blocks or penalises orders based on `draft.metadata["regime"]`. |
 | `DrawdownKillSwitch` | Reduces or blocks new `BUY` orders based on portfolio drawdown. |
-| `CorrelationFilter` | Blocks new `BUY` orders when the proposed symbol is too correlated with currently held symbols. |
+| `CorrelationFilter` | Blocks new `BUY` orders when the proposed symbol is too correlated with currently held symbols. Waits for its `lookback` window to fill before acting; `ramp_up` buys an earlier, weaker answer. |
 | `IntegerQuantity` | Rounds the draft down to whole tradable units (`lot_size`), dropping one that rounds away. |
 | `SignalQuantityCap` | Holds a sizer to the `max_quantity` the signal asked for, so capital-based sizing cannot exceed the size the strategy could actually see. |
 | `SymbolCapitalFractionSizer` | Sizes a `BUY` by the money it should spend rather than the units it should buy, topping up towards each symbol's share of capital. |
@@ -478,6 +478,11 @@ for `18.1000155` shares — and a real venue rejects both. `TickRounding` and `I
 sized order tradable, so a live chain wants them last. `ghosalquant.util.rounding` holds the primitives
 (`floor_to_tick`, `ceil_to_tick`, `round_to_tick`); they use `Decimal` because a binary float cannot hold `193.375`
 and `round(193.375, 2)` answers `193.38` while `round(0.125, 2)` answers `0.12`.
+
+`Window(size, ramp_up)` in `ghosalquant.risk.types` is how a rule reads `RiskContext.price_history` safely.
+`window.of(series)` returns the last `size` observations, or `None` while fewer than `ramp_up` of them exist —
+`ramp_up` defaults to `size`, so a rule waits for the window it asked for. Slicing the history directly instead
+returns whatever is there, and a correlation over three points is noise a rule then acts on.
 
 `sizing_capital(context, capital=..., reference_capital=...)` in `ghosalquant.risk.sizing` is what the
 capital-aware rules size from. It is fixed at `capital` until `reference_capital` is given, and then scales with

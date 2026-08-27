@@ -1,8 +1,39 @@
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Protocol
+from typing import Any, Protocol, Sequence
 
 from ..core.types import Liquidity, OpenOrderView, SignalType
+
+
+@dataclass(frozen=True, slots=True)
+class Window:
+    """
+    A rolling window, and how much history it needs before its answer means anything.
+
+    The last ``size`` observations are used once ``ramp_up`` of them exist; below that there is no
+    answer rather than a weak one. Slicing a series directly returns whatever is there, and a
+    correlation over three points is noise a rule then acts on. ``ramp_up`` defaults to ``size``.
+    """
+
+    size: int
+    ramp_up: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.size <= 0:
+            raise ValueError("window size must be > 0")
+        if self.ramp_up is not None and not 0 < self.ramp_up <= self.size:
+            raise ValueError("ramp_up must be > 0 and no larger than size")
+
+    @property
+    def required(self) -> int:
+        """Observations needed before the window answers at all."""
+        return self.size if self.ramp_up is None else self.ramp_up
+
+    def of(self, series: Sequence[float] | None) -> list[float] | None:
+        """The window's observations, or ``None`` while there are too few to trust."""
+        if series is None or len(series) < self.required:
+            return None
+        return list(series[-self.size:])
 
 @dataclass(slots=True)
 class OrderDraft:

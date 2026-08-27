@@ -19,7 +19,7 @@ from .rules.rule_signal_quantity_cap import SignalQuantityCap
 from .rules.rule_symbol_capital_sizer import SymbolCapitalFractionSizer
 from .rules.rule_tick_rounding import TickRounding
 from .sizing import current_equity, sizing_capital
-from .types import OrderDraft, RiskContext, RiskRule
+from .types import OrderDraft, RiskContext, RiskRule, Window
 
 __all__ = [
     "CashAllocationConfig",
@@ -46,4 +46,5 @@ __all__ = [
     "OrderDraft",
     "RiskContext",
     "RiskRule",
+    "Window",
 ]

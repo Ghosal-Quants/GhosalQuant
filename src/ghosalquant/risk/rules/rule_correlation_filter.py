@@ -2,7 +2,7 @@ import logging
 import math
 
 from ...core.types import SignalType
-from ..types import RiskRule, OrderDraft, RiskContext
+from ..types import RiskRule, OrderDraft, RiskContext, Window
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,9 @@ def _pearson(x: list[float], y: list[float]) -> float:
 
 
 class CorrelationFilter(RiskRule):
-    def __init__(self, lookback: int = 60, threshold: float = 0.75) -> None:
+    def __init__(
+        self, lookback: int = 60, threshold: float = 0.75, *, ramp_up: int | None = None
+    ) -> None:
         """
         Blocks a BUY order when the proposed symbol is too highly correlated with
         any currently-held position.
@@ -48,8 +50,8 @@ class CorrelationFilter(RiskRule):
         symbol -> list of recent close prices) using Pearson correlation on
         log-returns over the most recent ``lookback`` bars.
 
-        If ``price_history`` is ``None`` or does not contain the required symbols
-        the rule passes through (no block).
+        A symbol without enough history is passed over, so the rule has no opinion until its
+        window fills.
 
         :param lookback: int
             Number of recent price bars to use for the correlation window.
@@ -57,9 +59,15 @@ class CorrelationFilter(RiskRule):
         :param threshold: float
             Absolute correlation level at or above which the order is blocked.
             Default ``0.75``.
+        :param ramp_up: int | None
+            Bars needed before the rule acts at all. Defaults to ``lookback``.
         """
-        self.lookback = int(lookback)
+        self.window = Window(int(lookback), ramp_up)
         self.threshold = float(threshold)
+
+    @property
+    def lookback(self) -> int:
+        return self.window.size
 
     def apply(self, draft: OrderDraft, context: RiskContext) -> bool:
         if draft.side != SignalType.BUY:
@@ -68,22 +76,19 @@ class CorrelationFilter(RiskRule):
         if context.price_history is None:
             return True
 
-        candidate_prices = context.price_history.get(draft.symbol)
-        if candidate_prices is None or len(candidate_prices) < 3:
+        candidate_window = self.window.of(context.price_history.get(draft.symbol))
+        if candidate_window is None:
             return True
 
         held_symbols = set(context.open_qty_by_symbol.keys())
         if not held_symbols:
             return True
 
-        candidate_window = candidate_prices[-self.lookback:]
-
         for held_sym in held_symbols:
-            held_prices = context.price_history.get(held_sym)
-            if held_prices is None or len(held_prices) < 3:
+            held_window = self.window.of(context.price_history.get(held_sym))
+            if held_window is None:
                 continue
 
-            held_window = held_prices[-self.lookback:]
             corr = _pearson(candidate_window, held_window)
 
             if abs(corr) >= self.threshold:

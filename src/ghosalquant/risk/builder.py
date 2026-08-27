@@ -47,9 +47,11 @@ def make_drawdown_killswitch(p: dict[str, Any]) -> DrawdownKillSwitch:
 
 
 def make_correlation_filter(p: dict[str, Any]) -> CorrelationFilter:
+    ramp_up = p.get("ramp_up")
     return CorrelationFilter(
         lookback=int(p.get("lookback", 60)),
         threshold=float(p.get("threshold", 0.75)),
+        ramp_up=None if ramp_up is None else int(ramp_up),
     )
 
 
