@@ -9,7 +9,7 @@ import random
 from datetime import datetime, timedelta, timezone
 
 from ghosalquant import OrderBookStrategy
-from ghosalquant.brokerage.simulated import SimBroker
+from ghosalquant.brokerage.order_book_sim import OrderBookSimBroker
 from ghosalquant.core import metadata_keys
 from ghosalquant.core.types import BookLevel, Fill, Liquidity, OrderBook, PublicTrade, Signal, SignalType
 from ghosalquant.data_layer.list_datasource import ListDataSource
@@ -25,8 +25,8 @@ from ghosalquant.util.backtester_utils import calculate_kpms
 class JoinTheBidStrategy(OrderBookStrategy):
     """
     When flat with nothing resting, join the best bid (a maker order). When the bid fills, offer
-    the position two ticks higher. One position at a time; SimBroker's touch-crossing rule fills
-    a resting order when the far side of the book reaches its price.
+    the position two ticks higher. One position at a time; the resting order waits behind the
+    quantity already displayed at its price and fills when public prints trade through it.
     """
 
     def __init__(self, quantity: float = 10.0, tick: float = 0.01, exit_ticks: int = 2) -> None:
@@ -120,7 +120,7 @@ def run(seed: int = 7, steps: int = 600):
         strategy=strategy,
         risk_manager=RiskManager(rules=[MaxOpenPositions(max_open_positions=1)]),
         portfolio=portfolio,
-        broker=SimBroker(spread_bps=0.0, slippage_std_bps=0.0, impact_bps_at_full_participation=0.0, seed=seed),
+        broker=OrderBookSimBroker(maker_rebate_bps=2.0, taker_fee_bps=5.0, public_trade_participation=0.5),
         snapshot_interval=timedelta(seconds=5),
     )
     asyncio.run(execution.run())

@@ -250,16 +250,33 @@ asyncio.run(execution_system.run())
 ```
 
 `Signal.limit_price` and `Signal.liquidity` travel through the `RiskManager` (rules may tighten the limit) onto the
-`Order`; `SimBroker` rests a limit order until a bar or a book touch reaches its price, and `IBKRBroker` sends a
-`LimitOrder` instead of a `MarketOrder`. `SimBroker` fills an order against a book when the touch reaches its
-price, for up to the displayed quantity at that level. A full example with synthetic books is in
-`examples/example_order_book_strategy.py`.
+`Order`; `IBKRBroker` then sends a `LimitOrder` instead of a `MarketOrder`.
+
+Use `OrderBookSimBroker` for order-book work:
+
+```python
+from ghosalquant.brokerage import OrderBookSimBroker
+
+broker = OrderBookSimBroker(
+    maker_rebate_bps=2.0,          # credited as a negative Fill.commission
+    taker_fee_bps=5.0,             # both are required
+    public_trade_participation=0.5,  # at most half of each print can reach your orders
+    lot_size=1.0,                  # optional: floor fills to whole units
+    max_order_age_seconds=300.0,   # optional TTL
+)
+```
+
+A resting maker order queues behind the size already displayed at its price and fills only when public prints trade
+through it, so joining the bid earns the spread rather than paying it. `SimBroker` also accepts books, but fills by
+crossing the touch — fine for a bar strategy that occasionally sees a book, misleading for a passive one. A full
+example with synthetic books and prints is in `examples/example_order_book_strategy.py`.
 
 ## Quick Reference
 
 | What you want | What to use |
 |---|---|
 | Trade order books / prints | `OrderBookStrategy` + `on_order_book(book, context)` |
+| Simulate resting limit orders | `OrderBookSimBroker` |
 | Combine several data streams | `merge_datasources(...)` |
 | Backtest with a DataFrame | `DataFrameBacktester` |
 | Backtest from config (auto data) | `Backtester.from_config()` |

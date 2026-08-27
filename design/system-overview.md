@@ -552,14 +552,35 @@ touch (a `BUY` at the best ask, a `SELL` at the best bid) for up to the displaye
 order whose `limit_price` the touch has not reached rests. There is no queue position, participation cap, or depth
 sweeping. Public trades only advance market time.
 
-### 9.2 `IBKRBroker`
+### 9.2 `OrderBookSimBroker`
+A queue-aware simulated broker for L2 order books (`ghosalquant.brokerage.order_book_sim`). Use this rather than
+`SimBroker` whenever the data source yields `OrderBook`s: `SimBroker`'s book rule fills by crossing the touch, so
+every "maker" order is really a taker and passive strategies cannot be evaluated.
+
+- A **taker** order sweeps the displayed levels up to its limit immediately and never rests.
+- A **maker** order rests behind the quantity already displayed at its price
+  (`OpenOrderView.queue_ahead_quantity`) and fills only when a `PublicTrade` trades through that price and consumes
+  the queue ahead of it. It also fills if the book itself crosses the limit, at the order's own price.
+- One print is shared across eligible orders by price-then-time priority, and
+  `public_trade_participation` caps how much of each print can reach them.
+- `lot_size` floors fills to whole units; `maker_rebate_bps` is credited as a negative `Fill.commission` while
+  `taker_fee_bps` is charged. Both fee arguments are required.
+- Depth the broker consumes is withheld from the book returned by `on_order_book` until the venue redisplays it, so
+  the same liquidity cannot be taken twice. `adjusted_book(book)` exposes that view directly and
+  `observe_unchanged_book(book)` advances the clock without re-running matching.
+- Orders expire by `max_order_age_events`, by `max_order_age_seconds`, or per order via
+  `metadata["max_order_age_seconds"]`. `expire_orders(now=..., symbol=..., side=...)` runs expiry from a clock rather
+  than from market data, and `next_order_expiry_at()` / `order_symbols_expiring_by(until)` report what is due.
+- Implements `OpenOrderQueries`; `cancel_open_orders` additionally accepts `order_slots`.
+
+### 9.3 `IBKRBroker`
 A live broker implementation (`ghosalquant.brokerage.ibkr`) using `ib_insync` to connect to Interactive Brokers TWS
 or Gateway. Supports:
 - Async connect/disconnect.
-- Submitting market orders via the IBKR API.
+- Submitting market or limit orders via the IBKR API (a `LimitOrder` when the order carries a limit).
 - Receiving fills through the `execDetailsEvent` callback.
 
-### 9.3 Broker Builder
+### 9.4 Broker Builder
 `build_broker(broker_config)` in `ghosalquant.brokerage.builder` constructs a `SimBroker` or `IBKRBroker` from a
 `BrokerConfig` dataclass.
 
