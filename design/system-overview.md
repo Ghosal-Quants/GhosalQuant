@@ -704,7 +704,16 @@ A live broker implementation (`ghosalquant.brokerage.ibkr`) using `ib_insync` to
 or Gateway. Supports:
 - Async connect/disconnect.
 - Submitting market or limit orders via the IBKR API (a `LimitOrder` when the order carries a limit).
-- Receiving fills through the `execDetailsEvent` callback.
+- Receiving fills through the `execDetailsEvent` callback, with a second `execId` check over `ib_insync`'s own.
+- Reporting and cancelling resting orders (`OpenOrderQueries`), read from what IB says it is working rather than
+  from this process's memory, so an order placed before a restart is still visible. `MaxSymbolExposure` and
+  `CashAllocationRule` measure committed capital from `RiskContext.open_orders`, which stays empty for a broker
+  that cannot report — so without this they were blind live.
+- Commission taken from IB's `commissionReport` rather than left empty.
+
+What it still does not do: nothing survives a restart, and a fill is gone if the process dies between `get_fills`
+returning it and the portfolio applying it. Closing that needs the portfolio to apply fills idempotently by
+execution id, which a broker cannot do alone.
 
 ### 9.5 Broker Builder
 `build_broker(broker_config)` in `ghosalquant.brokerage.builder` constructs a `SimBroker` or `IBKRBroker` from a
