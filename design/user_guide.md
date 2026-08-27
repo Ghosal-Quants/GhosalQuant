@@ -291,6 +291,31 @@ it at bar data and `OrderBookSimBroker` at level-2 data. Both are presets over o
 order lifecycle, so latency, rejection and TTL expiry work the same either way. A full example with synthetic books
 and prints is in `examples/example_order_book_strategy.py`.
 
+## Recording a Session and Replaying It
+
+Wrap a live source to keep a copy of everything it produced. It yields exactly what it records, so the live run
+is unaffected.
+
+```python
+from ghosalquant.data_layer import RecordedDataSource, RecordingDataSource
+
+source = RecordingDataSource(LiveIBKRDataSource(...), "recordings/2026-03-02")
+await ExecutionSystem(source, strategy, portfolio=portfolio, risk_manager=risk, broker=broker).run()
+```
+
+The recording is a directory of durable streams: books are kept only when the visible book changes, prints are
+deduplicated by id, and each stream is a write-ahead log that seals into verified Parquet segments as it fills.
+Replay it as a data source:
+
+```python
+replay = RecordedDataSource("recordings/2026-03-02", symbols=["AAPL"])
+await ExecutionSystem(replay, strategy, portfolio=portfolio, risk_manager=risk, broker=OrderBookSimBroker(...)).run()
+```
+
+`kinds`, `symbols`, `start` and `end` narrow a replay. The repeated books that were compressed away are replayed
+too, so a strategy is woken as often as it was live; pass `rehydrate_unchanged=False` if you only want the changes.
+To read a recording outside the framework, `iter_stream_records(path)` yields every record in order, sealed or not.
+
 ## Quick Reference
 
 | What you want | What to use |
@@ -301,6 +326,8 @@ and prints is in `examples/example_order_book_strategy.py`.
 | Value a portfolio at what you could sell | `PortfolioValuationEngine` |
 | Go/no-go check before promoting | `evaluate_gates(metrics, spec)` |
 | Combine several data streams | `merge_datasources(...)` |
+| Record a live session to disk | `RecordingDataSource(source, dir)` |
+| Replay a recorded session | `RecordedDataSource(dir)` |
 | Backtest with a DataFrame | `DataFrameBacktester` |
 | Backtest from config (auto data) | `Backtester.from_config()` |
 | Live / paper trading | `ExecutionSystem` + `IBKRBroker` |

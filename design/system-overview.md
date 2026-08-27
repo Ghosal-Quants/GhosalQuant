@@ -348,6 +348,8 @@ then bar — so a print can fill a resting order before the strategy sees the po
 | `ParquetPolygonDataSource` | `data_layer.parquet_polygon_datasource` | Reads Polygon OHLCV data from a local `.parquet` file. Supports date/session filtering and timeframe resampling. Driven by `Config`. |
 | `LiveIBKRDataSource` | `data_layer.live_ibkr_datasource` | Streams live IBKR data via `ib_insync` and steps down to delayed data when live market data is unavailable. `events` selects `bars` (throttled ticks -> `Bar`), `order_books` (`reqMktDepth` with `depth` rows -> `OrderBook`, at most every `book_resolution_sec`), and `trades` (tick-by-tick -> `PublicTrade`). |
 | `LivePolygonDataSource` | `data_layer.live_polygon_datasource` | Streams live (or 15-min delayed) data from Polygon's WebSocket API with automatic reconnection. `events` selects `bars` (`A`/`AM`, `1SEC` or `1MIN`), `quotes` (`Q` -> one-level `OrderBook`), and `trades` (`T` -> `PublicTrade`). |
+| `RecordingDataSource` | `data_layer.recording_datasource` | Wraps any source and records every event on its way through, without changing what the strategy sees. |
+| `RecordedDataSource` | `data_layer.recording_datasource` | Replays a recording as a time-ordered `MarketEvent` stream, filtered by kind, symbol, and time window. |
 
 The `datasource_factory.datasource_from_config(cfg)` function creates the appropriate data source from a `Config`
 object (currently supports yfinance, Polygon parquet, and live IBKR). `DATA.events` (default `["bars"]`) selects the
@@ -778,3 +780,86 @@ A prototype GUI (`src/backtest_ui/`) built with `customtkinter` that lets users 
 file, then runs a `DataFrameBacktester` in a subprocess and displays logs and plots. This is experimental and not
 part of the core library.
 
+## 13 Recording and Replay
+`ghosalquant.recording` writes a live market-event stream to disk so it can be replayed later.
+
+### 13.1 Durable Storage
+`SegmentedParquetWriter` (`recording.storage`) appends JSON records to a write-ahead log and seals full logs as
+immutable zstd Parquet segments in a sibling `.segments` directory.
+- The active log is a plain `.jsonl` file, so a crash loses at most what the OS had buffered.
+- It rotates past `rotate_bytes` (32 MiB), or at `rotate_seconds` (24 h) holding at least
+  `min_age_rotation_bytes` (1 MiB).
+- Sealing checks the segment's row count and a SHA-256 of its records before deleting the log. A sealed segment is
+  never rewritten.
+- A log left unsealed by a crash is sealed on the next open.
+- A half-written final record is dropped by readers and truncated before the next append, so one lost record cannot
+  make the stream unreadable. A record that fails to parse anywhere else raises.
+- One writer per stream, held by a lock file.
+
+Readers do not need to know which part of a stream is sealed:
+
+| Function | Purpose |
+|---|---|
+| `iter_stream_records(path)` | Every record in order, across sealed segments and the live log, duplicates dropped. |
+| `iter_stream_records_with_provenance(path)` | The same, plus the file and line each came from. |
+| `last_stream_record(path)` | The newest record, read from the tail. |
+| `stream_source_files(path)` | The files backing a stream, sealed segments preferred over their logs. |
+| `discover_logical_streams(root)` | Every stream under a directory, named by its `.jsonl` path. |
+| `segment_metadata(path)` | A sealed segment's provenance. Segments stamped before this package was upstreamed are still read. |
+| `read_checkpoint` / `write_checkpoint` | Recorder state, replaced atomically. |
+
+### 13.2 Recorders
+| Recorder | Stream | Behaviour |
+|---|---|---|
+| `OrderBookRecorder` | `order_book_events.jsonl` | Writes a book only when it changes, to `depth` levels when capped. |
+| `PublicTradeRecorder` | `public_trades.jsonl` | Drops prints already seen, against a bounded window of trade ids (`max_tracked_trade_ids`). A print with no id is always recorded. |
+| `BarRecorder` | `bars.jsonl` | Writes bars as they arrive. |
+| `MarketEventRecorder` | all of the above | Routes a mixed stream by type, opening each stream on first use. |
+
+Each keeps a checkpoint beside its stream. The stream is the write-ahead record, so a process killed between
+appending a record and replacing its checkpoint is repaired on the next open by replaying the stream.
+
+`recording.events` converts events to records and back (`market_event_record`, `market_event_from_record`), so a
+recording is readable without the framework.
+
+### 13.3 State Intervals
+A polled feed repeats the same book many times. Storing every repeat wastes space; storing only the changes loses
+the fact that the book stood still. `recording.intervals` keeps both: repeats extend the last record's observation
+interval, and the next record carries the closed interval in `previous_snapshot_interval`. Each symbol's final open
+interval lives in the checkpoint.
+
+- `interval_observation_times(row)` recovers when a state was observed, exactly from recorded offsets or otherwise
+  reconstructed from the cadence. `iter_interval_observation_times(row)` walks them one at a time.
+- `iter_rehydrated_records(rows)` expands change-only records back into the full observation series. It holds
+  nothing between rows, so it also works as a cursor into a single record.
+- `record_state(row)` strips clocks and recorder bookkeeping; `state_checksum` hashes what is left. Inclusion by
+  default, so a newly recorded field creates state transitions rather than being compressed away.
+
+### 13.4 Recording and Replaying a Session
+```python
+from ghosalquant.data_layer import RecordedDataSource, RecordingDataSource
+
+live = RecordingDataSource(LiveIBKRDataSource(...), "recordings/2026-03-02")
+await ExecutionSystem(live, strategy, portfolio=portfolio, risk_manager=risk, broker=broker).run()
+
+replay = RecordedDataSource("recordings/2026-03-02")
+await ExecutionSystem(replay, strategy, portfolio=portfolio, risk_manager=risk, broker=OrderBookSimBroker(...)).run()
+```
+`RecordingDataSource` yields exactly the events it records, so the live run is unaffected. `RecordedDataSource`
+merges the recorded streams back into one time-ordered stream, narrowed by `kinds`, `symbols`, `start` and `end`.
+
+Books are stored only when they change, but a replay puts the repeats back by default, so a strategy is woken as
+often as it was live. A strategy that pulls its quote after thirty stale seconds needs a tick during those seconds
+to notice. Pass `rehydrate_unchanged=False` for the changes only.
+
+Restoring the repeats stays streaming. Each record becomes a cursor holding one row at a time, ordered in a heap by
+observation time; reading a record at `t` releases everything before `t`, since nothing later can be older than the
+record it belongs to. The heap holds one row per symbol in flight, not the expanded timeline. The stream is read
+twice whatever the symbol count: once to index the intervals (a record carries the interval of the one before it)
+and once to replay.
+
+A replay drives a strategy the same way the live session did — same events, signals, orders, fills, PnL and equity
+curve — with one exception. Change detection hashes the symbol and the levels, not `sequence`, so a reconstructed
+observation has no sequence number of its own and reports `None`; reusing the last one would break a consumer's gap
+check. Recorded observations keep the number they arrived with. Observations sharing a timestamp replay in the order
+their symbols first appeared.
