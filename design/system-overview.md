@@ -887,3 +887,42 @@ curve — with one exception. Change detection hashes the symbol and the levels,
 observation has no sequence number of its own and reports `None`; reusing the last one would break a consumer's gap
 check. Recorded observations keep the number they arrived with. Observations sharing a timestamp replay in the order
 their symbols first appeared.
+
+## 14 Durable State
+`ghosalquant.state` is where a live component puts what it cannot afford to lose on a restart. A backtest keeps
+its state in memory and starts again from nothing; a process connected to a funded account cannot.
+
+### 14.1 Atomic JSON
+`write_json(path, value)` (`state.atomic`) writes and fsyncs under a temporary name, renames it into place, and
+fsyncs the directory on POSIX. A crash mid-save leaves the previous file intact rather than a truncated one.
+`read_json` returns `{}` for a file that does not exist yet and raises `StateFormatError` for one that is corrupt.
+A rename that Windows briefly refuses — a just-written file can still be held open by a scanner — is retried.
+
+### 14.2 `VersionedJsonStateStore`
+One component's state in one file, taking a `StateCodec(to_dict, from_dict)` for whatever it holds.
+
+- **Versioning.** Each file records the schema version that wrote it. An older file goes through the store's
+  `upgrade` hook before decoding, so a system can be restarted onto newer code without losing what it knew; a file
+  from a *newer* version is refused rather than half-read.
+- **Identity.** With `identity` set, state left by a different strategy, account, or frozen candidate is refused
+  instead of silently resumed.
+- **Atomicity.** Saving replaces the file in one step.
+
+### 14.3 `EventLog` and `EventStore`
+`EventLog` is an append-only SQLite journal of what a live system did — the durable counterpart to `SignalSink`.
+WAL with `synchronous=FULL`, one row per event, ordered by an autoincrementing `sequence`.
+
+`EventStore` is the same journal plus a state checkpoint that cannot disagree with it. Events are written but not
+committed; `checkpoint(state)` writes the state and commits both in one transaction. After a crash the state you
+load is exactly the state the events on disk add up to — never a checkpoint ahead of its journal, nor a journal
+whose events were already folded into a state that was never saved. `rollback()` discards the events a failed poll
+wrote. Events are keyed by a hash of their own content and inserted with `INSERT OR IGNORE`, so replaying a poll
+that was already recorded adds nothing.
+
+| Call | Purpose |
+|---|---|
+| `record(event_type, payload, observed_at=, sequence=, classification=)` | Write one event, uncommitted. `False` means it was already stored. |
+| `checkpoint(state)` | Store the state and commit it with every event written since the last one. |
+| `load_checkpoint()` | The state as of the last commit. |
+| `rollback()` | Discard events written since the last checkpoint. |
+| `events(event_type=)` / `event_counts(classification=)` | Read the journal back. |

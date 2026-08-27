@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Iterator, Mapping
+from typing import Any, Iterator, Mapping
 from uuid import uuid4
 import hashlib
 import json
@@ -11,13 +11,13 @@ import time
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from ..state.atomic import StateFormatError, canonical_json, read_json, retry_while_locked, write_json
+
 DEFAULT_ROTATE_BYTES = 32 * 1024 * 1024
 DEFAULT_ROTATE_SECONDS = 24 * 60 * 60
 DEFAULT_MIN_AGE_ROTATION_BYTES = 1024 * 1024
 DEFAULT_BATCH_ROWS = 4096
 SEGMENT_SCHEMA_VERSION = 1
-REPLACE_ATTEMPTS = 10
-REPLACE_BACKOFF_SECONDS = 0.02
 
 STORAGE_METADATA_KEY = b"ghosalquant_storage"
 STORAGE_METADATA_VALUE = b"segmented_recorder"
@@ -135,7 +135,7 @@ class SegmentedParquetWriter:
         if raw_segment == self.path:
             self.segments_dir.mkdir(parents=True, exist_ok=True)
             raw_segment = self.segments_dir / f"segment-{_segment_id()}.jsonl"
-            _while_locked(lambda: self.path.replace(raw_segment))
+            retry_while_locked(lambda: self.path.replace(raw_segment))
         try:
             return compact_jsonl_segment(raw_segment)
         finally:
@@ -187,7 +187,7 @@ class SegmentedParquetWriter:
     def _seal_legacy_path(self) -> None:
         self.segments_dir.mkdir(parents=True, exist_ok=True)
         raw_segment = self.segments_dir / f"segment-{_segment_id()}.jsonl"
-        _while_locked(lambda: self.path.replace(raw_segment))
+        retry_while_locked(lambda: self.path.replace(raw_segment))
         compact_jsonl_segment(raw_segment)
 
     def _acquire_lock(self) -> None:
@@ -315,12 +315,12 @@ def compact_jsonl_segment(path: str | Path) -> CompactedSegment:
     profile = _profile_jsonl(source)
 
     if profile["rows"] == 0:
-        _while_locked(source.unlink)
+        retry_while_locked(source.unlink)
         return CompactedSegment(source, target, 0, profile["source_bytes"], 0, profile["records_sha256"])
 
     if target.is_file():
         _validate_parquet_segment(target, profile["rows"], profile["records_sha256"])
-        _while_locked(source.unlink)
+        retry_while_locked(source.unlink)
         return CompactedSegment(
             source, target, profile["rows"], profile["source_bytes"],
             target.stat().st_size, profile["records_sha256"],
@@ -366,8 +366,8 @@ def compact_jsonl_segment(path: str | Path) -> CompactedSegment:
         writer.close()
 
     _validate_parquet_segment(temporary, profile["rows"], profile["records_sha256"])
-    _while_locked(lambda: os.replace(temporary, target))
-    _while_locked(source.unlink)
+    retry_while_locked(lambda: os.replace(temporary, target))
+    retry_while_locked(source.unlink)
     return CompactedSegment(
         source, target, profile["rows"], profile["source_bytes"],
         target.stat().st_size, profile["records_sha256"],
@@ -393,39 +393,19 @@ def segment_metadata(path: str | Path) -> dict[str, str]:
 
 def canonical_record_json(value: Mapping[str, Any]) -> str:
     """A record's one canonical encoding, so hashes and dedup are stable."""
-    return json.dumps(dict(value), sort_keys=True, default=str, separators=(",", ":"))
+    return canonical_json(dict(value))
 
 
 def read_checkpoint(path: str | Path) -> dict[str, Any]:
-    checkpoint = Path(path)
-    if not checkpoint.is_file():
-        return {}
     try:
-        value = json.loads(checkpoint.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise RecorderStorageError(f"Invalid recorder checkpoint {checkpoint}: {exc}") from exc
-    if not isinstance(value, dict):
-        raise RecorderStorageError(f"Recorder checkpoint must be an object: {checkpoint}")
-    return value
+        return read_json(path)
+    except StateFormatError as exc:
+        raise RecorderStorageError(f"Invalid recorder checkpoint: {exc}") from exc
 
 
 def write_checkpoint(path: str | Path, value: Mapping[str, Any]) -> None:
     """Replace a checkpoint atomically, so a crash leaves the previous one intact."""
-    checkpoint = Path(path)
-    checkpoint.parent.mkdir(parents=True, exist_ok=True)
-    temporary = checkpoint.with_name(f".{checkpoint.name}.{uuid4().hex}.tmp")
-    encoded = json.dumps(dict(value), indent=2, sort_keys=True, default=str) + "\n"
-    with temporary.open("w", encoding="utf-8") as handle:
-        handle.write(encoded)
-        handle.flush()
-        os.fsync(handle.fileno())
-    _while_locked(lambda: os.replace(temporary, checkpoint))
-    if os.name != "nt":
-        directory_fd = os.open(checkpoint.parent, os.O_RDONLY)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
+    write_json(path, value)
 
 
 def record_time(value: Mapping[str, Any]) -> datetime | None:
@@ -621,24 +601,6 @@ def _unlock(handle) -> None:
         import fcntl
 
         fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-
-
-def _while_locked(action: Callable[[], Any]) -> None:
-    """
-    Retry a rename or delete that Windows is briefly refusing.
-
-    A file that was only just written can still be held open for a moment, by a scanner or by the
-    OS releasing the handle lazily, and the rename then fails with a sharing violation. On other
-    platforms this loop never runs a second time.
-    """
-    for attempt in range(REPLACE_ATTEMPTS):
-        try:
-            action()
-            return
-        except PermissionError:
-            if attempt == REPLACE_ATTEMPTS - 1:
-                raise
-            time.sleep(REPLACE_BACKOFF_SECONDS * (attempt + 1))
 
 
 def _segment_id() -> str:
