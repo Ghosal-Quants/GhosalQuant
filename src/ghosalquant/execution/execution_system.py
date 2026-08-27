@@ -2,7 +2,7 @@ import asyncio
 import sys
 from datetime import datetime, timedelta
 
-from ..core.types import Bar, MarketEvent, OpenOrderView, Order, OrderBook, PublicTrade, Signal
+from ..core.types import Bar, Fill, MarketEvent, OpenOrderView, Order, OrderBook, PublicTrade, Signal
 from ..data_layer.datasource_base import DataSource
 from ..execution.context import StrategyContext
 from ..execution.strategy_base import Strategy, as_signal_list
@@ -13,6 +13,7 @@ from ..portfolio.portfolio_base import Portfolio
 from ..portfolio.marks import MarkPolicy, mark_from_book, mark_from_trade
 from ..brokerage.broker_base import Broker
 from ..brokerage.open_orders import OpenOrderQueries
+from ..state.event_store import EventStore
 
 
 class _LazyContexts:
@@ -55,6 +56,7 @@ class ExecutionSystem:
             *,
             mark_policy: MarkPolicy = MarkPolicy.MID,
             snapshot_interval: timedelta = timedelta(seconds=1),
+            journal: EventStore | None = None,
     ) -> None:
 
         self.data_src = data_src
@@ -66,6 +68,7 @@ class ExecutionSystem:
         self.broker = broker
         self.mark_policy = mark_policy
         self.snapshot_interval = snapshot_interval
+        self.journal = journal
 
         self._price_history: dict[str, list[float]] = {}
         self._last_snapshot_at: datetime | None = None
@@ -103,10 +106,7 @@ class ExecutionSystem:
 
                 # Collect fills from the broker and pass to portfolio
                 if self.broker and self.portfolio:
-                    for fill in self.broker.get_fills():
-                        await self.portfolio.process_fill(fill)
-                        self._note_snapshot(fill.time_stamp)
-                        self._call_hook("on_fill", fill)
+                    await self._apply_fills(self.broker.get_fills())
 
                 contexts = _LazyContexts(self, raw.symbol)
 
@@ -135,6 +135,30 @@ class ExecutionSystem:
             if self.broker:
                 await self.broker.disconnect()
 
+    # ----- Fills ----- #
+
+    async def _apply_fills(self, fills: list[Fill]) -> None:
+        """
+        Apply fills to the portfolio, journalling them first when a journal is present.
+
+        The journal write and the portfolio update commit together, so on disk "journalled" and
+        "applied" mean the same thing. A process that dies partway through rolls the journal back
+        and reapplies the fill on the next run; one that dies after committing skips it, because
+        the journal already refuses an execution it holds.
+        """
+        if not fills:
+            return
+        for fill in fills:
+            if self.journal is not None and not self.journal.record(
+                "fill", _fill_payload(fill), observed_at=fill.time_stamp
+            ):
+                continue
+            await self.portfolio.process_fill(fill)
+            self._note_snapshot(fill.time_stamp)
+            self._call_hook("on_fill", fill)
+        if self.journal is not None:
+            self.journal.commit()
+
     # ----- Event routing ----- #
 
     async def _emit(self, signal: Signal, contexts: _LazyContexts) -> None:
@@ -158,9 +182,8 @@ class ExecutionSystem:
         """
         if self.broker is None:
             return
-        # Only orders already resting when the advance began are reported. A replacement submitted
-        # from the hook with a stale timestamp is due the moment it rests, and announcing that
-        # would invite the strategy to replace it again without the clock ever moving.
+        # Only orders resting when the advance began are announced: a replacement carrying a stale
+        # timestamp is due the moment it rests, and announcing it would loop.
         announce = set(self._open_orders_by_id())
         while True:
             expires_at = self.broker.next_order_expiry_at()
@@ -334,3 +357,17 @@ class ExecutionSystem:
             ),
             open_orders=self._open_order_views(),
         )
+
+
+def _fill_payload(fill: Fill) -> dict:
+    """What a journalled fill records. The execution id is what makes it unique."""
+    return {
+        "time_stamp": fill.time_stamp.isoformat(),
+        "symbol": fill.symbol,
+        "side": fill.side.value,
+        "quantity": float(fill.quantity),
+        "price": float(fill.price),
+        "execution_id": fill.execution_id,
+        "broker_order_id": fill.broker_order_id,
+        "commission": fill.commission,
+    }

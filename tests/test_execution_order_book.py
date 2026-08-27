@@ -26,6 +26,7 @@ from ghosalquant.execution.strategy_base import OrderBookStrategy, Strategy, as_
 from ghosalquant.portfolio.basic_portfolio import BasicPortfolio
 from ghosalquant.portfolio.marks import MarkPolicy, mark_from_book, mark_from_trade
 from ghosalquant.risk.risk_manager import RiskManager
+from ghosalquant.state.event_store import EventStore
 from ghosalquant.risk.types import OrderDraft, RiskContext
 
 
@@ -469,15 +470,20 @@ def test_bar_strategy_is_unaffected_by_books_and_prints_in_the_stream():
 
 def test_duck_typed_strategy_without_hooks_still_runs_on_books():
     class Minimal:
+        def __init__(self): self.bars = 0
         def on_start(self): ...
         def on_end(self): ...
-        def on_market_data(self, bar): return None
+        def on_market_data(self, bar): self.bars += 1; return None
 
+    strategy = Minimal()
     execution = ExecutionSystem(
         data_src=ListDataSource([_book(0, [(1.0, 1)], [(2.0, 1)]), _trade(1, 1.5), _bar(2, 1.5)]),
-        strategy=Minimal(),
+        strategy=strategy,
     )
     _run(execution)
+
+    # The book and the print are skipped rather than fatal, and the bar still arrives.
+    assert strategy.bars == 1
 
 
 def test_equity_snapshots_are_bounded_by_snapshot_interval():
@@ -715,3 +721,99 @@ def test_a_broker_that_expires_nothing_is_left_alone():
     _run_stream(_quote_then_other_symbol(4), strategy, broker)
 
     assert strategy.expired == []
+
+
+# ----- The fill journal ----- #
+
+class _FillOnce(OrderBookStrategy):
+    """Buys once, so exactly one fill flows through the journal."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.quoted = False
+        self.fills: list = []
+
+    def on_start(self) -> None: ...
+
+    def on_end(self) -> None: ...
+
+    def on_order_book(self, book, context=None):
+        if self.quoted or book.best_ask is None:
+            return None
+        self.quoted = True
+        return Signal(
+            time_stamp=book.time_stamp, symbol=book.symbol, signal_type=SignalType.BUY,
+            ref_price=book.best_ask.price, confidence=1.0, quantity=1.0,
+            limit_price=book.best_ask.price, liquidity=Liquidity.TAKER,
+        )
+
+    def on_fill(self, fill) -> None:
+        self.fills.append(fill)
+
+
+def _journalled_run(journal, portfolio=None):
+    strategy = _FillOnce()
+    system = ExecutionSystem(
+        ListDataSource([
+            _book(0, [(99.0, 500.0)], [(100.0, 500.0)]),
+            _book(1, [(99.0, 500.0)], [(100.0, 500.0)]),
+        ]),
+        strategy,
+        portfolio=portfolio if portfolio is not None else BasicPortfolio(init_capital=10_000.0),
+        risk_manager=RiskManager(),
+        broker=_sim_broker(),
+        journal=journal,
+    )
+    _run(system)
+    return strategy, system.portfolio
+
+
+def test_a_journalled_fill_is_recorded_and_applied(tmp_path):
+    with EventStore(tmp_path / "journal.db") as journal:
+        strategy, portfolio = _journalled_run(journal)
+
+        assert strategy.fills, "the run should have produced a fill"
+        assert [event.event_type for event in journal.events()] == ["fill"] * len(strategy.fills)
+        assert portfolio.open_qty_by_symbol.get("TEST", 0.0) > 0.0
+
+
+def test_a_fill_already_in_the_journal_is_not_applied_again(tmp_path):
+    path = tmp_path / "journal.db"
+    with EventStore(path) as journal:
+        strategy, _ = _journalled_run(journal)
+    applied = len(strategy.fills)
+
+    # The same session again, against the journal it left behind.
+    with EventStore(path) as reopened:
+        repeat, portfolio = _journalled_run(reopened)
+
+        assert applied > 0
+        assert repeat.fills == []
+        assert portfolio.open_qty_by_symbol.get("TEST", 0.0) == 0.0
+        assert len(reopened.events()) == applied
+
+
+def test_a_run_that_dies_before_committing_replays_the_fill(tmp_path, monkeypatch):
+    path = tmp_path / "journal.db"
+    journal = EventStore(path)
+    # Killed between recording the fill and committing it, so SQLite discards the event with
+    # the connection. Losing it here is right: the portfolio it was applied to is gone too.
+    monkeypatch.setattr(EventStore, "commit", lambda _self: None)
+    _journalled_run(journal)
+    monkeypatch.undo()
+    journal.connection.close()
+
+    with EventStore(path) as reopened:
+        assert reopened.events() == []
+        strategy, portfolio = _journalled_run(reopened)
+
+        # Nothing was lost: the fill is applied on the next run rather than skipped.
+        assert strategy.fills
+        assert portfolio.open_qty_by_symbol.get("TEST", 0.0) > 0.0
+
+
+def test_without_a_journal_fills_are_applied_exactly_as_before(tmp_path):
+    strategy, portfolio = _journalled_run(None)
+
+    assert strategy.fills
+    assert portfolio.open_qty_by_symbol.get("TEST", 0.0) > 0.0

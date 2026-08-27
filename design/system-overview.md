@@ -589,6 +589,9 @@ The default implementation (`ghosalquant.portfolio.basic_portfolio`). Key behavi
 - **`average_entry_price(symbol)`**: Open cost divided by open quantity, or `None` when flat.
 - Tracks `fees_paid` separately.
 
+The applied-execution set is in memory. Across a restart the venue is the authority: `adopt` re-seeds positions
+from the account, and `ExecutionSystem`'s journal (§14.4) is what stops a fill being applied twice.
+
 `ghosalquant.portfolio.marks` holds the `MarkPolicy` (`MID` or `CONSERVATIVE`) and the `mark_from_book` /
 `mark_from_trade` functions the loop uses.
 
@@ -950,3 +953,13 @@ that was already recorded adds nothing.
 | `load_checkpoint()` | The state as of the last commit. |
 | `rollback()` | Discard events written since the last checkpoint. |
 | `events(event_type=)` / `event_counts(classification=)` | Read the journal back. |
+
+### 14.4 Journalling fills
+`ExecutionSystem(..., journal=EventStore(...))` records every fill before applying it, and commits the journal
+after the batch. Because the write and the portfolio update commit together, "journalled" and "applied" mean the
+same thing on disk: a process that dies partway rolls the journal back and reapplies the fill next run, and one
+that dies after committing skips it, because the journal refuses an execution it already holds.
+
+Without a journal the loop behaves exactly as before. Note the portfolio itself is not checkpointed — live, it is
+re-seeded from the venue with `BasicPortfolio.adopt`, which is authoritative for positions in a way a local copy
+never is. The journal is the record of what this process did, not a second source of truth for what it holds.

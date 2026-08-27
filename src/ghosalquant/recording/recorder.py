@@ -230,7 +230,9 @@ class OrderBookRecorder(StreamRecorder):
         self._interval_by_symbol[book.symbol] = _new_interval(
             book.symbol, event_index, checksum, self.recording_session_id, seen_at
         )
-        self.save_state(force=True)
+        # Throttled, not forced: the checkpoint only caches what the stream already holds, and
+        # fsyncing it per record costs more than replaying a second of stream on the next open.
+        self.save_state()
         return RecordedBook(changed=changed, checksum=checksum, event_index=event_index)
 
     def _extend_interval(self, symbol: str, observed_at: datetime) -> None:
