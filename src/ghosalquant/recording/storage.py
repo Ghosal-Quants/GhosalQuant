@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator, Mapping
+from typing import Any, Callable, Iterator, Mapping
 from uuid import uuid4
 import hashlib
 import json
@@ -16,6 +16,8 @@ DEFAULT_ROTATE_SECONDS = 24 * 60 * 60
 DEFAULT_MIN_AGE_ROTATION_BYTES = 1024 * 1024
 DEFAULT_BATCH_ROWS = 4096
 SEGMENT_SCHEMA_VERSION = 1
+REPLACE_ATTEMPTS = 10
+REPLACE_BACKOFF_SECONDS = 0.02
 
 STORAGE_METADATA_KEY = b"ghosalquant_storage"
 STORAGE_METADATA_VALUE = b"segmented_recorder"
@@ -133,7 +135,7 @@ class SegmentedParquetWriter:
         if raw_segment == self.path:
             self.segments_dir.mkdir(parents=True, exist_ok=True)
             raw_segment = self.segments_dir / f"segment-{_segment_id()}.jsonl"
-            self.path.replace(raw_segment)
+            _while_locked(lambda: self.path.replace(raw_segment))
         try:
             return compact_jsonl_segment(raw_segment)
         finally:
@@ -185,7 +187,7 @@ class SegmentedParquetWriter:
     def _seal_legacy_path(self) -> None:
         self.segments_dir.mkdir(parents=True, exist_ok=True)
         raw_segment = self.segments_dir / f"segment-{_segment_id()}.jsonl"
-        self.path.replace(raw_segment)
+        _while_locked(lambda: self.path.replace(raw_segment))
         compact_jsonl_segment(raw_segment)
 
     def _acquire_lock(self) -> None:
@@ -313,12 +315,12 @@ def compact_jsonl_segment(path: str | Path) -> CompactedSegment:
     profile = _profile_jsonl(source)
 
     if profile["rows"] == 0:
-        source.unlink()
+        _while_locked(source.unlink)
         return CompactedSegment(source, target, 0, profile["source_bytes"], 0, profile["records_sha256"])
 
     if target.is_file():
         _validate_parquet_segment(target, profile["rows"], profile["records_sha256"])
-        source.unlink()
+        _while_locked(source.unlink)
         return CompactedSegment(
             source, target, profile["rows"], profile["source_bytes"],
             target.stat().st_size, profile["records_sha256"],
@@ -364,8 +366,8 @@ def compact_jsonl_segment(path: str | Path) -> CompactedSegment:
         writer.close()
 
     _validate_parquet_segment(temporary, profile["rows"], profile["records_sha256"])
-    os.replace(temporary, target)
-    source.unlink()
+    _while_locked(lambda: os.replace(temporary, target))
+    _while_locked(source.unlink)
     return CompactedSegment(
         source, target, profile["rows"], profile["source_bytes"],
         target.stat().st_size, profile["records_sha256"],
@@ -378,7 +380,8 @@ def segment_metadata(path: str | Path) -> dict[str, str]:
 
     Segments stamped before this package was upstreamed use a different key and are still read.
     """
-    metadata = pq.ParquetFile(Path(path)).schema_arrow.metadata or {}
+    with pq.ParquetFile(Path(path)) as segment:
+        metadata = segment.schema_arrow.metadata or {}
     keys = (STORAGE_METADATA_KEY, *LEGACY_STORAGE_METADATA_KEYS)
     if not any(metadata.get(key) == STORAGE_METADATA_VALUE for key in keys):
         return {}
@@ -416,7 +419,7 @@ def write_checkpoint(path: str | Path, value: Mapping[str, Any]) -> None:
         handle.write(encoded)
         handle.flush()
         os.fsync(handle.fileno())
-    os.replace(temporary, checkpoint)
+    _while_locked(lambda: os.replace(temporary, checkpoint))
     if os.name != "nt":
         directory_fd = os.open(checkpoint.parent, os.O_RDONLY)
         try:
@@ -553,11 +556,12 @@ def _truncate_torn_tail(path: Path) -> None:
 
 
 def _iter_parquet_records(path: Path) -> Iterator[tuple[int, dict[str, Any]]]:
-    parquet = pq.ParquetFile(path)
-    for batch in parquet.iter_batches(columns=["source_line", "record_json"]):
-        rows = batch.to_pylist()
-        for row in rows:
-            yield int(row["source_line"]), json.loads(row["record_json"])
+    # Closed explicitly: an open segment holds a lock on Windows, and a reader still holding one
+    # stops the writer sealing or replacing that file.
+    with pq.ParquetFile(path) as parquet:
+        for batch in parquet.iter_batches(columns=["source_line", "record_json"]):
+            for row in batch.to_pylist():
+                yield int(row["source_line"]), json.loads(row["record_json"])
 
 
 def _last_jsonl_record(path: Path) -> dict[str, Any] | None:
@@ -588,10 +592,10 @@ def _last_jsonl_record(path: Path) -> dict[str, Any] | None:
 
 
 def _last_parquet_record(path: Path) -> dict[str, Any] | None:
-    parquet = pq.ParquetFile(path)
-    if parquet.metadata.num_rows == 0:
-        return None
-    group = parquet.read_row_group(parquet.num_row_groups - 1, columns=["record_json"])
+    with pq.ParquetFile(path) as parquet:
+        if parquet.metadata.num_rows == 0:
+            return None
+        group = parquet.read_row_group(parquet.num_row_groups - 1, columns=["record_json"])
     values = group.column("record_json").to_pylist()
     return json.loads(values[-1]) if values else None
 
@@ -617,6 +621,24 @@ def _unlock(handle) -> None:
         import fcntl
 
         fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def _while_locked(action: Callable[[], Any]) -> None:
+    """
+    Retry a rename or delete that Windows is briefly refusing.
+
+    A file that was only just written can still be held open for a moment, by a scanner or by the
+    OS releasing the handle lazily, and the rename then fails with a sharing violation. On other
+    platforms this loop never runs a second time.
+    """
+    for attempt in range(REPLACE_ATTEMPTS):
+        try:
+            action()
+            return
+        except PermissionError:
+            if attempt == REPLACE_ATTEMPTS - 1:
+                raise
+            time.sleep(REPLACE_BACKOFF_SECONDS * (attempt + 1))
 
 
 def _segment_id() -> str:
