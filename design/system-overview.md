@@ -464,6 +464,21 @@ Risk management sits between signal generation and order execution. The `RiskMan
 | `RegimeFilter` | Blocks or penalises orders based on `draft.metadata["regime"]`. |
 | `DrawdownKillSwitch` | Reduces or blocks new `BUY` orders based on portfolio drawdown. |
 | `CorrelationFilter` | Blocks new `BUY` orders when the proposed symbol is too correlated with currently held symbols. |
+| `IntegerQuantity` | Rounds the draft down to whole tradable units (`lot_size`), dropping one that rounds away. |
+| `SignalQuantityCap` | Holds a sizer to the `max_quantity` the signal asked for, so capital-based sizing cannot exceed the size the strategy could actually see. |
+| `SymbolCapitalFractionSizer` | Sizes a `BUY` by the money it should spend rather than the units it should buy, topping up towards each symbol's share of capital. |
+| `MaxSymbolExposure` | Caps one symbol's notional as a fraction of sizing capital, counting resting buys and charging a taker's fee into the ceiling. Trims rather than blocks where there is room. |
+| `CashAllocationRule` | Keeps dry powder: trims a `BUY` to the tightest of the account, symbol, bucket and per-order ceilings on how much may sit in resting buys. |
+
+Rules report through `logging`, one logger per rule module, so a backtest is quiet unless you ask for it.
+
+`sizing_capital(context, capital=..., reference_capital=...)` in `ghosalquant.risk.sizing` is what the
+capital-aware rules size from. It is fixed at `capital` until `reference_capital` is given, and then scales with
+`RiskContext.current_equity` so a book in drawdown sizes down instead of letting each order become a larger share
+of what is left.
+
+`plan_cash_reclamation(...)` returns the resting `order_slot`s to cancel to fund a better order on the same symbol,
+weakest first. It plans only; cancelling is the caller's, through `Broker.cancel_open_orders`.
 
 ### 6.3 Building from Config
 `build_risk_manager(risk_config)` in `ghosalquant.risk.builder` constructs a `RiskManager` from a `RiskConfig`

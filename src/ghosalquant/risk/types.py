@@ -26,6 +26,7 @@ class RiskContext:
     position_cost_by_symbol: dict[str, float] = field(default_factory=dict)
     current_drawdown: float | None = None  # -0.05 means 5% below peak
     peak_equity: float | None = None
+    current_equity: float | None = None
     price_history: dict[str, list[float]] | None = None # recent close prices per symbol
     open_orders: tuple[OpenOrderView, ...] = ()
 

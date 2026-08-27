@@ -8,7 +8,8 @@ Application code may add its own keys alongside these.
 Set by strategies on a Signal (copied onto the Order by RiskManager):
 ``LIMIT_PRICE`` and ``LIQUIDITY`` predate the first-class fields of the same name and are still
 honoured; ``ORDER_SLOT`` is a stable name a strategy uses to find its own resting order;
-``MAX_QUANTITY`` is the strategy's own size cap; ``MAX_ORDER_AGE_SECONDS`` lets a broker expire
+``MAX_QUANTITY`` is the strategy's own size cap; ``ALLOCATION_BUCKET`` names the cash
+bucket the order competes in; ``MAX_ORDER_AGE_SECONDS`` lets a broker expire
 the order; ``REPLACE_ENTRY_ORDERS`` / ``REPLACE_EXIT_ORDERS`` ask for the symbol's resting
 entries / exits to be cancelled first; ``CANCEL_REMAINDER_AFTER_FIRST_FILL`` gives a limit
 IOC-like behaviour.
@@ -26,6 +27,7 @@ MAX_ORDER_AGE_SECONDS = "max_order_age_seconds"
 REPLACE_ENTRY_ORDERS = "replace_entry_orders"
 REPLACE_EXIT_ORDERS = "replace_exit_orders"
 CANCEL_REMAINDER_AFTER_FIRST_FILL = "cancel_remainder_after_first_fill"
+ALLOCATION_BUCKET = "allocation_bucket"
 
 CONFIDENCE = "confidence"
 IDEMPOTENCY_KEY = "idempotency_key"
@@ -42,6 +44,7 @@ __all__ = [
     "REPLACE_ENTRY_ORDERS",
     "REPLACE_EXIT_ORDERS",
     "CANCEL_REMAINDER_AFTER_FIRST_FILL",
+    "ALLOCATION_BUCKET",
     "CONFIDENCE",
     "IDEMPOTENCY_KEY",
     "STOP_LOSS",

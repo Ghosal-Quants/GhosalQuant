@@ -325,6 +325,9 @@ To read a recording outside the framework, `iter_stream_records(path)` yields ev
 | Sharpe / Sortino / Calmar / drawdown | `risk_adjusted_metrics(...)` (also on `BacktestKPMs`) |
 | Value a portfolio at what you could sell | `PortfolioValuationEngine` |
 | Go/no-go check before promoting | `evaluate_gates(metrics, spec)` |
+| Size by money, not share count | `SymbolCapitalFractionSizer` |
+| Cap one symbol's exposure | `MaxSymbolExposure` |
+| Keep cash free for a better order | `CashAllocationRule` |
 | Combine several data streams | `merge_datasources(...)` |
 | Record a live session to disk | `RecordingDataSource(source, dir)` |
 | Replay a recorded session | `RecordedDataSource(dir)` |

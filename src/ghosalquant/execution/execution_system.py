@@ -297,6 +297,7 @@ class ExecutionSystem:
         open_qty_by_symbol: dict[str, float] = {}
         position_cost_by_symbol: dict[str, float] = {}
         peak_equity: float | None = None
+        equity: float | None = None
         current_drawdown: float | None = None
 
         if self.portfolio is not None:
@@ -315,10 +316,10 @@ class ExecutionSystem:
                 if trades
             }
             peak_equity = float(self.portfolio.peak_equity)
-            current_equity = float(self.portfolio.current_equity)
+            equity = float(self.portfolio.current_equity)
 
             if peak_equity > 0.0:
-                current_drawdown = (current_equity / peak_equity) - 1.0
+                current_drawdown = (equity / peak_equity) - 1.0
 
         return RiskContext(
             open_positions=open_positions,
@@ -326,6 +327,7 @@ class ExecutionSystem:
             position_cost_by_symbol=position_cost_by_symbol,
             current_drawdown=current_drawdown,
             peak_equity=peak_equity,
+            current_equity=equity,
             price_history=(
                 {symbol: list(prices) for symbol, prices in self._price_history.items()}
                 if self._price_history else None

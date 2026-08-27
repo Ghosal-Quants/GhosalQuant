@@ -1,5 +1,8 @@
+import logging
 from ...core.types import SignalType
 from ..types import RiskRule, OrderDraft, RiskContext
+
+logger = logging.getLogger(__name__)
 
 class DrawdownKillSwitch(RiskRule):
     def __init__(
@@ -47,9 +50,9 @@ class DrawdownKillSwitch(RiskRule):
 
         # Kill switch
         if dd <= self.kill_threshold:
-            print(
-                f"[DrawdownKillSwitch] KILL SWITCH – blocked {draft.symbol}: "
-                f"drawdown {dd:.2%} <= kill threshold {self.kill_threshold:.2%}"
+            logger.warning(
+                "DrawdownKillSwitch blocked %s: drawdown %.2f%% past kill threshold %.2f%%",
+                draft.symbol, dd * 100.0, self.kill_threshold * 100.0,
             )
             return False
 
@@ -57,9 +60,9 @@ class DrawdownKillSwitch(RiskRule):
         if dd <= self.reduce_threshold and draft.quantity is not None:
             original = draft.quantity
             draft.quantity = draft.quantity * self.reduce_multiplier
-            print(
-                f"[DrawdownKillSwitch] Reduced {draft.symbol}: "
-                f"drawdown {dd:.2%} -> quantity {original:.4f} * {self.reduce_multiplier} = {draft.quantity:.4f}"
+            logger.info(
+                "DrawdownKillSwitch reduced %s at %.2f%% drawdown: %.4f -> %.4f",
+                draft.symbol, dd * 100.0, original, draft.quantity,
             )
 
         return True

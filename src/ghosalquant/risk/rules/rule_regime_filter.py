@@ -1,4 +1,7 @@
+import logging
 from ..types import RiskRule, OrderDraft, RiskContext
+
+logger = logging.getLogger(__name__)
 
 class RegimeFilter(RiskRule):
     def __init__(
@@ -32,19 +35,16 @@ class RegimeFilter(RiskRule):
         regime: str = str(draft.metadata.get("regime", "")).strip().upper()
 
         if regime in self.blocked_regimes:
-            print(
-                f"[RegimeFilter] Blocked {draft.symbol}: "
-                f"regime '{regime}' is in blocked list"
-            )
+            logger.info("RegimeFilter blocked %s: regime %r", draft.symbol, regime)
             return False
 
         if regime in self.penalty_regimes and draft.quantity is not None:
             multiplier = self.penalty_regimes[regime]
             original = draft.quantity
             draft.quantity = draft.quantity * multiplier
-            print(
-                f"[RegimeFilter] Penalised {draft.symbol}: "
-                f"regime '{regime}' -> quantity {original:.4f} * {multiplier} = {draft.quantity:.4f}"
+            logger.info(
+                "RegimeFilter penalised %s in regime %r: %.4f -> %.4f",
+                draft.symbol, regime, original, draft.quantity,
             )
 
         return True

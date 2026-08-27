@@ -1,7 +1,10 @@
+import logging
 import math
 
 from ...core.types import SignalType
 from ..types import RiskRule, OrderDraft, RiskContext
+
+logger = logging.getLogger(__name__)
 
 
 def _pearson(x: list[float], y: list[float]) -> float:
@@ -84,9 +87,9 @@ class CorrelationFilter(RiskRule):
             corr = _pearson(candidate_window, held_window)
 
             if abs(corr) >= self.threshold:
-                print(
-                    f"[CorrelationFilter] Blocked {draft.symbol}: "
-                    f"|corr| with {held_sym} = {abs(corr):.4f} >= {self.threshold}"
+                logger.info(
+                    "CorrelationFilter blocked %s: |corr| with %s = %.4f >= %s",
+                    draft.symbol, held_sym, abs(corr), self.threshold,
                 )
                 return False
 

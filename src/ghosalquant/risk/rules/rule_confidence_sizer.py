@@ -1,4 +1,8 @@
+import logging
+
 from ..types import RiskRule, OrderDraft, RiskContext
+
+logger = logging.getLogger(__name__)
 
 def lerp(a: float, b: float, t: float) -> float:
     if t < 0.0:
@@ -19,5 +23,5 @@ class ConfidenceSizer(RiskRule):
         draft.quantity = float(lerp(self.min_quantity, self.max_quantity, confidence))
 
         if draft.quantity == 0.0:
-            print("[ConfidenceSizer] BLOCKED: Confidence too low.")
+            logger.info("ConfidenceSizer blocked %s: confidence too low", draft.symbol)
         return draft.quantity > 0.0
