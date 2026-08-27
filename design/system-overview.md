@@ -353,6 +353,7 @@ then bar — so a print can fill a resting order before the strategy sees the po
 | `LivePolygonDataSource` | `data_layer.live_polygon_datasource` | Streams live (or 15-min delayed) data from Polygon's WebSocket API with automatic reconnection. `events` selects `bars` (`A`/`AM`, `1SEC` or `1MIN`), `quotes` (`Q` -> one-level `OrderBook`), and `trades` (`T` -> `PublicTrade`). |
 | `RecordingDataSource` | `data_layer.recording_datasource` | Wraps any source and records every event on its way through, without changing what the strategy sees. |
 | `RecordedDataSource` | `data_layer.recording_datasource` | Replays a recording as a time-ordered `MarketEvent` stream, filtered by kind, symbol, and time window. |
+| `ShockedDataSource` | `data_layer.shocks` | Wraps any source and moves prices or thins depth, so a session can be replayed through a market that did not happen. |
 
 The `datasource_factory.datasource_from_config(cfg)` function creates the appropriate data source from a `Config`
 object (currently supports yfinance, Polygon parquet, and live IBKR). `DATA.events` (default `["bars"]`) selects the
@@ -602,7 +603,7 @@ The default implementation (`ghosalquant.portfolio.basic_portfolio`). Key behavi
 - Tracks `fees_paid` separately.
 
 The applied-execution set is in memory. Across a restart the venue is the authority: `adopt` re-seeds positions
-from the account, and `ExecutionSystem`'s journal (§14.4) is what stops a fill being applied twice.
+from the account, and `ExecutionSystem`'s journal (§15.4) is what stops a fill being applied twice.
 
 `ghosalquant.portfolio.marks` holds the `MarkPolicy` (`MID` or `CONSERVATIVE`) and the `mark_from_book` /
 `mark_from_trade` functions the loop uses.
@@ -927,17 +928,36 @@ observation has no sequence number of its own and reports `None`; reusing the la
 check. Recorded observations keep the number they arrived with. Observations sharing a timestamp replay in the order
 their symbols first appeared.
 
-## 14 Durable State
+## 14 Scenarios
+`ghosalquant.data_layer.shocks` answers "what would the strategy have done if the market had gapped" by replaying
+a stream through one that did not happen. A `Shock` moves prices (`price_fraction` proportionally,
+`price_offset` by an amount) and scales size (`depth_fraction`), optionally only for some `symbols` and only from
+`at` onwards — dated, it is a gap partway through a session; undated, it is a different market throughout.
+
+```python
+as_it_happened = RecordedDataSource("recordings/2026-03-02")
+gapped = ShockedDataSource(RecordedDataSource("recordings/2026-03-02"), Shock(price_fraction=-0.05))
+```
+
+Run the same strategy over both and compare. Because it is a `DataSource` like any other, everything downstream is
+unchanged: the strategy, broker, portfolio and risk rules see the shocked market as the real one. `shocked(event,
+*shocks)` applies the same transformation to a single event.
+
+Books stay well formed — every level moves together, so the ordering holds and the derived fields are recomputed —
+and a shocked book drops its recorder checksum, which described the book that actually traded. A shock that would
+price a book at nothing is rejected by `BookLevel` rather than clamped.
+
+## 15 Durable State
 `ghosalquant.state` is where a live component puts what it cannot afford to lose on a restart. A backtest keeps
 its state in memory and starts again from nothing; a process connected to a funded account cannot.
 
-### 14.1 Atomic JSON
+### 15.1 Atomic JSON
 `write_json(path, value)` (`state.atomic`) writes and fsyncs under a temporary name, renames it into place, and
 fsyncs the directory on POSIX. A crash mid-save leaves the previous file intact rather than a truncated one.
 `read_json` returns `{}` for a file that does not exist yet and raises `StateFormatError` for one that is corrupt.
 A rename that Windows briefly refuses — a just-written file can still be held open by a scanner — is retried.
 
-### 14.2 `VersionedJsonStateStore`
+### 15.2 `VersionedJsonStateStore`
 One component's state in one file, taking a `StateCodec(to_dict, from_dict)` for whatever it holds.
 
 - **Versioning.** Each file records the schema version that wrote it. An older file goes through the store's
@@ -947,7 +967,7 @@ One component's state in one file, taking a `StateCodec(to_dict, from_dict)` for
   instead of silently resumed.
 - **Atomicity.** Saving replaces the file in one step.
 
-### 14.3 `EventLog` and `EventStore`
+### 15.3 `EventLog` and `EventStore`
 `EventLog` is an append-only SQLite journal of what a live system did — the durable counterpart to `SignalSink`.
 WAL with `synchronous=FULL`, one row per event, ordered by an autoincrementing `sequence`.
 
@@ -966,7 +986,7 @@ that was already recorded adds nothing.
 | `rollback()` | Discard events written since the last checkpoint. |
 | `events(event_type=)` / `event_counts(classification=)` | Read the journal back. |
 
-### 14.4 Journalling fills
+### 15.4 Journalling fills
 `ExecutionSystem(..., journal=EventStore(...))` records every fill before applying it, and commits the journal
 after the batch. Because the write and the portfolio update commit together, "journalled" and "applied" mean the
 same thing on disk: a process that dies partway rolls the journal back and reapplies the fill next run, and one
