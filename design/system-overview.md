@@ -128,6 +128,9 @@ DataSource -> MarketEvent -> ExecutionSystem -> Strategy -> Signal(s)
 
 A `DataSource` yields `MarketEvent`s: `Bar`s, `OrderBook`s, and `PublicTrade`s in any mix. For every event the
 `ExecutionSystem`:
+0. Expires any resting order whose time to live ran out before this event, calling
+   `Strategy.on_order_expired(order, broker_order_id, expired_at, context)`. A broker only reaches a symbol when
+   that symbol has an event, so without this an order stays visible long after the venue would have cancelled it.
 1. Passes the event to the `Broker` (`on_bar` / `on_order_book` / `on_public_trade`). A simulation broker may return
    an adjusted view of an order book for the strategy to see.
 2. Marks the `Portfolio` from the **raw** event: a bar's close, a two-sided book's mid (or bid/ask under
@@ -377,6 +380,8 @@ class Strategy(ABC):
     def on_public_trade(self, trade: PublicTrade, context: StrategyContext) -> SignalResult: ...
     def on_fill(self, fill: Fill) -> None: ...
     def on_order_accepted(self, order: Order, broker_order_id: str | None) -> None: ...
+    def on_order_expired(self, order: Order, broker_order_id: str,
+                         expired_at: datetime, context: StrategyContext) -> SignalResult: ...
 
     def calculate_quantity(self, confidence) -> float | None: ...
 ```
@@ -388,6 +393,10 @@ class Strategy(ABC):
 - `on_public_trade(trade, context)`: Called for each `PublicTrade`. Same contract. Default: no-op.
 - `on_fill(fill)`: Called after the `Portfolio` processed a fill. Default: no-op.
 - `on_order_accepted(order, broker_order_id)`: Called after the `Broker` accepted an order. Default: no-op.
+- `on_order_expired(order, broker_order_id, expired_at, context)`: Called when a resting order passed its time to
+  live, at the moment it expired rather than when the symbol next ticked. Returns signals like `on_order_book`, so a
+  strategy can requote there and then — timestamp the replacement with `expired_at`, or it is born expired.
+  Default: no-op.
 - `on_end()`: Called after all market data has been processed.
 - `calculate_quantity(confidence)`: Built-in helper that returns `max_qty` if confidence >= threshold, else `min_qty`.
   Strategies may override this.

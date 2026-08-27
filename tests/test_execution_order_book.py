@@ -582,3 +582,136 @@ def test_bars_still_snapshot_every_bar_and_feed_price_history():
 
     assert len(list(portfolio.equity_curve)) == 5
     assert rule.contexts[0].price_history == {"TEST": [100.0, 101.0, 102.0, 103.0, 104.0]}
+
+
+# ----- Time-to-live expiry runs off the clock ----- #
+
+class QuoteOnce(OrderBookStrategy):
+    """Rests one bid on the first book for its symbol, then only watches."""
+
+    def __init__(self, symbol: str = "TEST") -> None:
+        super().__init__()
+        self.symbol = symbol
+        self.quoted = False
+        self.expired: list = []
+        self.resting_seen: list = []
+
+    def on_start(self) -> None:
+        return None
+
+    def on_end(self) -> None:
+        return None
+
+    def on_order_book(self, book: OrderBook, context: StrategyContext | None = None):
+        if book.symbol != self.symbol or self.quoted or book.best_bid is None:
+            return None
+        self.quoted = True
+        return Signal(
+            time_stamp=book.time_stamp, symbol=self.symbol, signal_type=SignalType.BUY,
+            ref_price=book.best_bid.price, confidence=1.0, quantity=1.0,
+            limit_price=book.best_bid.price,
+        )
+
+    def on_order_expired(self, order: Order, broker_order_id: str, expired_at, context: StrategyContext):
+        self.expired.append((order.symbol, broker_order_id, (expired_at - T0).total_seconds()))
+        return None
+
+
+def _run_stream(stream, strategy, broker) -> None:
+    _run(ExecutionSystem(
+        ListDataSource(stream), strategy,
+        portfolio=BasicPortfolio(init_capital=100_000.0),
+        risk_manager=RiskManager(), broker=broker,
+    ))
+
+
+def _quote_then_other_symbol(last_second: int) -> list:
+    stream = [_book(0, [(100.0, 500.0)], [(100.02, 500.0)])]
+    stream += [
+        _book(second, [(50.0, 500.0)], [(50.02, 500.0)], symbol="OTHER")
+        for second in range(1, last_second + 1)
+    ]
+    return stream
+
+
+def test_a_resting_order_expires_on_the_clock_not_when_its_symbol_next_ticks():
+    broker = _sim_broker(max_order_age_seconds=2.0)
+
+    class Watcher(QuoteOnce):
+        def on_order_book(self, book, context=None):
+            elapsed = (book.time_stamp - T0).total_seconds()
+            self.resting_seen.append((elapsed, len(broker.open_order_views("TEST"))))
+            return super().on_order_book(book, context)
+
+    strategy = Watcher()
+    _run_stream(_quote_then_other_symbol(5), strategy, broker)
+
+    # Resting at t=1, gone from t=2, even though TEST never ticks again.
+    assert [seen for seen in strategy.resting_seen if seen[0] >= 1] == [
+        (1.0, 1), (2.0, 0), (3.0, 0), (4.0, 0), (5.0, 0)
+    ]
+    assert strategy.expired == [("TEST", "OBS-1", 2.0)]
+
+
+def test_an_order_inside_its_time_to_live_is_left_alone():
+    broker = _sim_broker(max_order_age_seconds=30.0)
+    strategy = QuoteOnce()
+
+    _run_stream(_quote_then_other_symbol(5), strategy, broker)
+
+    assert strategy.expired == []
+    assert len(broker.open_order_views("TEST")) == 1
+
+
+def test_a_strategy_can_requote_from_the_expiry_hook():
+    broker = _sim_broker(max_order_age_seconds=2.0)
+
+    class Requote(QuoteOnce):
+        def on_order_expired(self, order, broker_order_id, expired_at, context):
+            self.expired.append((order.symbol, broker_order_id, (expired_at - T0).total_seconds()))
+            return Signal(
+                time_stamp=expired_at, symbol=order.symbol, signal_type=SignalType.BUY,
+                ref_price=order.limit_price, confidence=1.0, quantity=1.0,
+                limit_price=order.limit_price,
+            )
+
+    strategy = Requote()
+    _run_stream(_quote_then_other_symbol(3), strategy, broker)
+
+    # The replacement rests without waiting for TEST to tick again, and carries a fresh clock.
+    assert strategy.expired == [("TEST", "OBS-1", 2.0)]
+    assert len(broker.open_order_views("TEST")) == 1
+
+
+def test_a_stale_requote_cannot_stall_the_clock():
+    broker = _sim_broker(max_order_age_seconds=2.0)
+
+    class StaleRequote(QuoteOnce):
+        def on_order_expired(self, order, broker_order_id, expired_at, context):
+            self.expired.append((order.symbol, broker_order_id, (expired_at - T0).total_seconds()))
+            # Timestamped with the dead order's clock, so the replacement is born expired.
+            return Signal(
+                time_stamp=order.time_stamp, symbol=order.symbol, signal_type=SignalType.BUY,
+                ref_price=order.limit_price, confidence=1.0, quantity=1.0,
+                limit_price=order.limit_price,
+            )
+
+    strategy = StaleRequote()
+    _run_stream(_quote_then_other_symbol(3), strategy, broker)
+
+    # The replacement is expired without being announced, so the strategy is not asked again.
+    assert strategy.expired == [("TEST", "OBS-1", 2.0)]
+    assert broker.open_order_views("TEST") == ()
+
+
+def test_a_broker_that_expires_nothing_is_left_alone():
+    class NoExpiry(SimBroker):
+        def next_order_expiry_at(self):
+            return None
+
+    broker = NoExpiry(seed=3, max_order_age_seconds=2.0)
+    strategy = QuoteOnce()
+
+    _run_stream(_quote_then_other_symbol(4), strategy, broker)
+
+    assert strategy.expired == []

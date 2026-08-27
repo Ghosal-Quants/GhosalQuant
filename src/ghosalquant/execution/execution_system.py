@@ -86,6 +86,8 @@ class ExecutionSystem:
 
         try:
             async for raw in self.data_src:
+                await self._expire_due(raw.time_stamp)
+
                 event: MarketEvent = raw
                 self._last_event_time = raw.time_stamp
                 if self.broker:
@@ -109,19 +111,7 @@ class ExecutionSystem:
                 contexts = _LazyContexts(self, raw.symbol)
 
                 for signal in self._signals_for(event, contexts):
-                    # Forward to optional signal sink
-                    if self.sig_sink is not None:
-                        await self.sig_sink.on_signal(signal)
-
-                    if self.risk_manager:
-                        order: Order | None = self.risk_manager.evaluate(signal, contexts.risk)
-
-                        if order is None:
-                            continue
-
-                        if self.broker:
-                            broker_order_id = self.broker.submit(order)
-                            self._call_hook("on_order_accepted", order, broker_order_id)
+                    await self._emit(signal, contexts)
 
             self._flush_equity()
 
@@ -146,6 +136,53 @@ class ExecutionSystem:
                 await self.broker.disconnect()
 
     # ----- Event routing ----- #
+
+    async def _emit(self, signal: Signal, contexts: _LazyContexts) -> None:
+        if self.sig_sink is not None:
+            await self.sig_sink.on_signal(signal)
+        if self.risk_manager is None:
+            return
+        order: Order | None = self.risk_manager.evaluate(signal, contexts.risk)
+        if order is None or self.broker is None:
+            return
+        broker_order_id = self.broker.submit(order)
+        self._call_hook("on_order_accepted", order, broker_order_id)
+
+    async def _expire_due(self, until: datetime) -> None:
+        """
+        Expire resting orders whose time to live ran out before ``until``.
+
+        A broker only reaches a symbol when that symbol has an event, so without this an order
+        stays in the open-order state long after it expired, and any strategy or risk rule that
+        asks what is resting is told about an order the venue would already have cancelled.
+        """
+        if self.broker is None:
+            return
+        # Only orders already resting when the advance began are reported. A replacement submitted
+        # from the hook with a stale timestamp is due the moment it rests, and announcing that
+        # would invite the strategy to replace it again without the clock ever moving.
+        announce = set(self._open_orders_by_id())
+        while True:
+            expires_at = self.broker.next_order_expiry_at()
+            if expires_at is None or expires_at > until:
+                return
+            resting = self._open_orders_by_id()
+            expired = self.broker.expire_orders(now=expires_at)
+            if not expired:
+                return
+            for order_id in expired:
+                order = resting.get(order_id)
+                if order is None or order_id not in announce:
+                    continue
+                contexts = _LazyContexts(self, order.symbol)
+                hook = getattr(self.strategy, "on_order_expired", None)
+                result = hook(order, order_id, expires_at, contexts.strategy) if callable(hook) else None
+                for signal in as_signal_list(result):
+                    await self._emit(signal, contexts)
+
+    def _open_orders_by_id(self) -> dict[str, Order]:
+        views = getattr(self.broker, "open_order_views", None)
+        return {view.broker_order_id: view.order for view in views()} if callable(views) else {}
 
     def _signals_for(self, event: MarketEvent, contexts: _LazyContexts) -> list[Signal]:
         match event:

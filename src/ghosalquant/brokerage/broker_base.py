@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from datetime import datetime
 
 from ..core.types import Bar, Fill, MarketEvent, Order, OrderBook, PublicTrade
 
@@ -54,6 +55,21 @@ class Broker(ABC):
                 self.on_public_trade(event)
                 return event
         raise TypeError(f"Unsupported market event: {type(event).__name__}")
+
+    # ----- Order lifecycle ----- #
+    def next_order_expiry_at(self) -> datetime | None:
+        """When the earliest resting order falls due, or ``None`` if the broker expires none."""
+        return None
+
+    def expire_orders(self, *, now: datetime) -> list[str]:
+        """
+        Expire resting orders past their time to live, returning the ids removed.
+
+        A live venue expires its own orders, so the default does nothing. A simulation broker
+        overrides this, and the ``ExecutionSystem`` drives it from the clock so an order is gone
+        the moment it falls due rather than when its symbol next ticks.
+        """
+        return []
 
     # ----- Execution ----- #
     @abstractmethod

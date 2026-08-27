@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from datetime import datetime
 from typing import Iterable, Union
 
 from ..core.types import Bar, Fill, Order, OrderBook, PublicTrade, Signal
@@ -70,6 +71,19 @@ class Strategy(ABC):
         Called after the ``Broker`` accepted an order, with the broker's id for it (``None`` when
         the broker does not return one). Lets a strategy associate later fills and
         ``OpenOrderView`` entries with the signal that produced them.
+        """
+        return None
+
+    def on_order_expired(
+        self, order: Order, broker_order_id: str, expired_at: datetime, context: StrategyContext
+    ) -> SignalResult:
+        """
+        Called when a resting order passed its time to live, at the moment it expired rather than
+        when the next market event arrived. Same signal contract as ``on_order_book``, so a
+        strategy can requote there and then instead of waiting for its symbol to tick again.
+
+        Timestamp a replacement with ``expired_at``, not with ``order.time_stamp``: the original is
+        already older than its own time to live, so the replacement would expire immediately.
         """
         return None
 
