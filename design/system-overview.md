@@ -543,6 +543,8 @@ class Portfolio(Protocol):
     def total_pnl(self) -> float: ...
     @property
     def final_balance(self) -> float: ...
+    @property
+    def open_trades(self) -> Iterable[Trade]: ...   # the open lots, for valuation
 ```
 
 ### 8.1 `BasicPortfolio`
@@ -557,6 +559,36 @@ The default implementation (`ghosalquant.portfolio.basic_portfolio`). Key behavi
 
 `ghosalquant.portfolio.marks` holds the `MarkPolicy` (`MID` or `CONSERVATIVE`) and the `mark_from_book` /
 `mark_from_trade` functions the loop uses.
+
+### 8.2 Executable Valuation
+`PortfolioValuationEngine` (`ghosalquant.portfolio.valuation`) values a portfolio three ways at once:
+
+- **marked NAV** — cash plus quantity × last price, the ordinary accounting series;
+- **liquidation equity** — cash plus the net proceeds of selling out into the displayed bids, after the exit fee,
+  net of our own resting orders when `books_include_open_orders=True` and `open_orders` are supplied;
+- **risk equity** — cash plus, per position, `min(net proceeds, acquisition cost of the sellable slice)`, and nothing
+  for inventory there is no bid for. Capping at cost means an unrealised gain or a thin high quote never inflates
+  buying capacity, which is what makes it the right series to feed `DrawdownKillSwitch`.
+
+**A book is never required.** A symbol with no book, a stale one (`stale_after_seconds`), one invalidated by
+`invalidate_book(symbol)`, or one marked untradable by `set_tradable(symbol, False)` falls back to its mark price and
+is reported as `ValuationBasis.MARKED` — it is *not* valued at zero, which is what a bar-only feed would otherwise
+produce. Every `SymbolValuation` carries the `basis` it used (`EXECUTABLE` / `INDICATIVE` / `MARKED`) and
+`PortfolioValuation` exposes `basis_counts`, `fully_executable`, and `marked_symbols`, so a drawdown reading is never
+silently half-executable. `require_book=True` turns a missing book into an error instead, which is only right when
+every symbol is known to have one.
+
+```python
+engine = PortfolioValuationEngine(taker_fee_bps=7.5, stale_after_seconds=60.0)
+engine.observe_book(book)                      # whenever a book arrives
+snapshot = engine.snapshot(now, portfolio=portfolio, open_orders=broker.open_order_views())
+snapshot.risk_equity, snapshot.marked_nav, snapshot.fully_executable
+```
+
+Supporting pieces: `liquidate_into_bids(quantity, bids, *, taker_fee_bps)` walks displayed depth once and returns a
+`DepthLiquidation`; `profitable_bid_liquidation(...)` restricts that to the contiguous depth clearing a net-price
+floor; `LotLadder` (`ghosalquant.portfolio.lots`) holds a symbol's open lots in LIFO order with prefix sums so
+`cost_of(quantity)` is a bisect.
 
 ## 9 Brokers
 Brokers are subclasses of the abstract `Broker` base class from `ghosalquant.brokerage.broker_base`.

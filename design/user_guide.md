@@ -297,6 +297,7 @@ example with synthetic books and prints is in `examples/example_order_book_strat
 | Trade order books / prints | `OrderBookStrategy` + `on_order_book(book, context)` |
 | Simulate resting limit orders | `OrderBookSimBroker` |
 | Sharpe / Sortino / Calmar / drawdown | `risk_adjusted_metrics(...)` (also on `BacktestKPMs`) |
+| Value a portfolio at what you could sell | `PortfolioValuationEngine` |
 | Go/no-go check before promoting | `evaluate_gates(metrics, spec)` |
 | Combine several data streams | `merge_datasources(...)` |
 | Backtest with a DataFrame | `DataFrameBacktester` |

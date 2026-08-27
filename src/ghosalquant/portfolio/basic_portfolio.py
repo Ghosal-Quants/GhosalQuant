@@ -149,6 +149,10 @@ class BasicPortfolio(Portfolio):
         return dict(self._open_qty_by_symbol)
 
     @property
+    def open_trades(self) -> tuple[Trade, ...]:
+        return tuple(trade for trades in self._open_trades.values() for trade in trades.values())
+
+    @property
     def final_balance(self) -> float:
         if not self._equity_points:
             return self._init_capital

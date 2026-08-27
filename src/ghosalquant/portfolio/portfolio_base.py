@@ -79,6 +79,11 @@ class Portfolio(Protocol):
         ...
 
     @property
+    def open_trades(self) -> Iterable[Trade]:
+        """The open lots, in no particular order; valuation orders them itself."""
+        ...
+
+    @property
     def last_prices(self) -> dict[str, float]:
         ...
 
