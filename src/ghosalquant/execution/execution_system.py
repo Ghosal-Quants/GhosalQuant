@@ -2,6 +2,7 @@ import asyncio
 import sys
 from datetime import datetime, timedelta
 
+from ..core.contracts import ContractRegistry
 from ..core.types import Bar, Fill, MarketEvent, OpenOrderView, Order, OrderBook, PublicTrade, Signal
 from ..data_layer.datasource_base import DataSource
 from ..execution.context import StrategyContext
@@ -57,6 +58,7 @@ class ExecutionSystem:
             mark_policy: MarkPolicy = MarkPolicy.MID,
             snapshot_interval: timedelta = timedelta(seconds=1),
             journal: EventStore | None = None,
+            contracts: ContractRegistry | None = None,
     ) -> None:
 
         self.data_src = data_src
@@ -69,6 +71,7 @@ class ExecutionSystem:
         self.mark_policy = mark_policy
         self.snapshot_interval = snapshot_interval
         self.journal = journal
+        self.contracts = contracts if contracts is not None else ContractRegistry()
 
         self._price_history: dict[str, list[float]] = {}
         self._last_snapshot_at: datetime | None = None
@@ -308,6 +311,7 @@ class ExecutionSystem:
 
         return StrategyContext(
             symbol=symbol,
+            contract=self.contracts.get(symbol),
             position_quantity=position_quantity,
             average_entry_price=average_entry_price,
             cash=cash,
@@ -356,6 +360,7 @@ class ExecutionSystem:
                 if self._price_history else None
             ),
             open_orders=self._open_order_views(),
+            contracts=self.contracts,
         )
 
 

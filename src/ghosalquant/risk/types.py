@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Protocol, Sequence
 
+from ..core.contracts import ContractRegistry
 from ..core.types import Liquidity, OpenOrderView, SignalType
 
 
@@ -60,6 +61,7 @@ class RiskContext:
     current_equity: float | None = None
     price_history: dict[str, list[float]] | None = None # recent close prices per symbol
     open_orders: tuple[OpenOrderView, ...] = ()
+    contracts: ContractRegistry = field(default_factory=ContractRegistry)
 
 class RiskRule(Protocol):
     def apply(self, draft: OrderDraft, context: RiskContext) -> bool:

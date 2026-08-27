@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 
+from ..core.contracts import Contract
 from ..core.types import OpenOrderView, SignalType
 from ..risk.types import RiskContext
 
@@ -19,6 +20,7 @@ class StrategyContext:
     the ``RiskManager`` will evaluate the resulting signals against.
     """
     symbol: str
+    contract: Contract
     position_quantity: float
     average_entry_price: float | None
     cash: float

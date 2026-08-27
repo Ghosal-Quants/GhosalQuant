@@ -281,7 +281,27 @@ class RiskContext:
     price_history: dict[str, list[float]] | None = None
 ```
 
-### 2.8 Order-Book Market Data
+### 2.8 Contracts
+`ghosalquant.core.contracts` says what a symbol *is*, without changing what an event is. A `symbol` stays whatever
+the venue calls it, so market events, brokers and recordings are untouched; a `Contract` describes it alongside.
+
+```python
+Contract(symbol="AAPL  260116C00150000", underlier="AAPL", multiplier=100.0,
+         right=Right.CALL, strike=150.0, expiry=date(2026, 1, 16))
+```
+
+`underlier` is the contract's own symbol for a share, so netting a derivative against its underlying is one lookup
+rather than a special case.
+
+`ContractRegistry` holds them, and never returns `None`: a symbol nobody registered is a share of itself, so an
+empty registry behaves exactly as no registry at all and only what is *not* a share has to be described. It never
+infers either — `Contract.from_occ(symbol)` reads the 21-character US option form when you call it, and nothing
+calls it for you. A symbol means what it was registered as, not what its shape suggests.
+
+`ExecutionSystem(..., contracts=...)` passes it to `RiskContext.contracts` and to `StrategyContext.contract`, which
+is the contract for that event's symbol.
+
+### 2.9 Order-Book Market Data
 Alongside `Bar`, a data source may yield the two order-book event types. All three are `MarketEvent`s.
 ```python
 @dataclass(frozen=True, slots=True)

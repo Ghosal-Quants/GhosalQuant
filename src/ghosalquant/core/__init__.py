@@ -1,4 +1,5 @@
 from . import metadata_keys
+from .contracts import Contract, ContractRegistry, Right, Settlement
 from .types import (
     BacktestKPMs,
     Bar,
@@ -19,6 +20,10 @@ from .types import (
 
 __all__ = [
     "metadata_keys",
+    "Contract",
+    "ContractRegistry",
+    "Right",
+    "Settlement",
     "BacktestKPMs",
     "Bar",
     "BookLevel",
