@@ -613,56 +613,74 @@ A broker may additionally implement the `OpenOrderQueries` protocol (`ghosalquan
 `open_order_views(symbol=None)` and `cancel_open_orders(symbol, side=None)` — in which case the `ExecutionSystem`
 fills `StrategyContext.open_orders` and `RiskContext.open_orders` from it. `SimBroker` does.
 
-### 9.1 `SimBroker`
-A simulated broker (`ghosalquant.brokerage.simulated`) with configurable:
-- Spread (basis points)
-- Slippage (mean and std, in basis points)
-- Commission per share
-- Partial fill probability
-- Reject probability
-- Maximum participation per bar volume
-- Participation-based market impact
-- Latency range (milliseconds)
-- Deterministic seed for reproducibility
+### 9.1 `SimulatedBroker` and its presets
+Simulation is one broker plus a pluggable market model. `SimulatedBroker`
+(`ghosalquant.brokerage.simulation`) owns everything that is not microstructure — submission,
+latency, rejection, the working-order registry, time-to-live expiry, cancellation, commission and
+fill delivery — and delegates "what does this resting order fill against this event?" to a
+`FillModel` (`ghosalquant.brokerage.fills`). Commission is likewise a model:
+`PerShareCommission` or `MakerTakerCommission` (`ghosalquant.brokerage.commissions`).
 
-Orders are submitted after a strategy sees a bar and become eligible on a later bar once latency has elapsed. The
-broker uses `on_bar(bar)` to advance simulated market time, caps fills by bar volume participation, and prices fills
-from the eligible bar with spread, slippage, and participation-based impact.
+```python
+SimulatedBroker(
+    QueueAwareFill(public_trade_participation=0.5, lot_size=1.0),
+    commission=MakerTakerCommission(maker_rebate_bps=2.0, taker_fee_bps=6.0),
+    max_latency_ms=250, reject_probability=0.01, max_order_age_seconds=300.0,
+)
+```
 
-Against an `OrderBook` the broker applies a deliberately naive touch-crossing rule: an eligible order crosses the
-touch (a `BUY` at the best ask, a `SELL` at the best bid) for up to the displayed quantity at that level, and an
-order whose `limit_price` the touch has not reached rests. There is no queue position, participation cap, or depth
-sweeping. Public trades only advance market time.
+Because the lifecycle is shared, latency, rejection, TTL expiry, order slots and
+`OpenOrderQueries` are available to every model rather than to whichever broker happened to
+implement them.
 
-### 9.2 `OrderBookSimBroker`
-A queue-aware simulated broker for L2 order books (`ghosalquant.brokerage.order_book_sim`). Use this rather than
-`SimBroker` whenever the data source yields `OrderBook`s: `SimBroker`'s book rule fills by crossing the touch, so
-every "maker" order is really a taker and passive strategies cannot be evaluated.
+Two fill models ship:
+
+| Model | Fills against | Use for |
+|---|---|---|
+| `BarParticipationFill` | `Bar`s only | OHLCV backtests |
+| `QueueAwareFill` | `OrderBook`s and `PublicTrade`s | level-2 strategies |
+
+`SimBroker` and `OrderBookSimBroker` are presets over that core with the same constructor
+arguments they always had, so existing code and `BROKERAGE` config keep working.
+
+### 9.2 `SimBroker` (bar participation)
+An eligible order takes a share of the bar's volume, priced from the bar open plus half-spread,
+slippage and participation-based impact, clamped to the bar's range; a limit the modelled price
+does not reach rests until a later bar. Configurable: spread, slippage mean/std, commission per
+share, partial fill probability, reject probability, maximum participation per bar volume,
+participation impact, latency range, and a deterministic seed.
+
+Order books and public trades advance the clock but fill nothing. A bar model has no view of
+depth or queue position, so it reports no `Fill.liquidity`. For level-2 data use
+`OrderBookSimBroker` — assuming a resting order crosses the touch would make every passive
+strategy look like a taker.
+
+### 9.3 `OrderBookSimBroker` (queue aware)
+A queue-aware broker for L2 order books. Use it whenever the data source yields `OrderBook`s.
 
 - A **taker** order sweeps the displayed levels up to its limit immediately and never rests.
 - A **maker** order rests behind the quantity already displayed at its price
-  (`OpenOrderView.queue_ahead_quantity`) and fills only when a `PublicTrade` trades through that price and consumes
-  the queue ahead of it. It also fills if the book itself crosses the limit, at the order's own price.
+  (`OpenOrderView.queue_ahead_quantity`) and fills only when a `PublicTrade` trades through that
+  price and consumes the queue ahead of it, or when the book itself crosses its limit.
+- Whoever crosses pays the resting side's price: an order that is marketable **on submission**
+  takes the level price, while an order the book later crosses keeps **its own limit**.
 - One print is shared across eligible orders by price-then-time priority, and
-  `public_trade_participation` caps how much of each print can reach them.
-- `lot_size` floors fills to whole units; `maker_rebate_bps` is credited as a negative `Fill.commission` while
-  `taker_fee_bps` is charged. Both fee arguments are required.
-- Depth the broker consumes is withheld from the book returned by `on_order_book` until the venue redisplays it, so
-  the same liquidity cannot be taken twice. `adjusted_book(book)` exposes that view directly and
-  `observe_unchanged_book(book)` advances the clock without re-running matching.
-- Orders expire by `max_order_age_events`, by `max_order_age_seconds`, or per order via
-  `metadata["max_order_age_seconds"]`. `expire_orders(now=..., symbol=..., side=...)` runs expiry from a clock rather
-  than from market data, and `next_order_expiry_at()` / `order_symbols_expiring_by(until)` report what is due.
-- Implements `OpenOrderQueries`; `cancel_open_orders` additionally accepts `order_slots`.
+  `public_trade_participation` caps how much of each print can reach them. Repeated `trade_id`s
+  are ignored.
+- `lot_size` floors fills to whole units; `maker_rebate_bps` is credited as a negative
+  `Fill.commission` while `taker_fee_bps` is charged. Both fee arguments are required.
+- Depth the broker consumes is withheld from the book returned by `on_order_book` until the venue
+  redisplays it, so the same liquidity cannot be taken twice. `adjusted_book(book)` exposes that
+  view directly and `observe_unchanged_book(book)` records a book without re-running matching.
 
-### 9.3 `IBKRBroker`
+### 9.4 `IBKRBroker`
 A live broker implementation (`ghosalquant.brokerage.ibkr`) using `ib_insync` to connect to Interactive Brokers TWS
 or Gateway. Supports:
 - Async connect/disconnect.
 - Submitting market or limit orders via the IBKR API (a `LimitOrder` when the order carries a limit).
 - Receiving fills through the `execDetailsEvent` callback.
 
-### 9.4 Broker Builder
+### 9.5 Broker Builder
 `build_broker(broker_config)` in `ghosalquant.brokerage.builder` constructs a `SimBroker` or `IBKRBroker` from a
 `BrokerConfig` dataclass.
 

@@ -286,9 +286,10 @@ broker = OrderBookSimBroker(
 ```
 
 A resting maker order queues behind the size already displayed at its price and fills only when public prints trade
-through it, so joining the bid earns the spread rather than paying it. `SimBroker` also accepts books, but fills by
-crossing the touch — fine for a bar strategy that occasionally sees a book, misleading for a passive one. A full
-example with synthetic books and prints is in `examples/example_order_book_strategy.py`.
+through it, so joining the bid earns the spread rather than paying it. `SimBroker` fills against bars only, so point
+it at bar data and `OrderBookSimBroker` at level-2 data. Both are presets over one `SimulatedBroker` that owns the
+order lifecycle, so latency, rejection and TTL expiry work the same either way. A full example with synthetic books
+and prints is in `examples/example_order_book_strategy.py`.
 
 ## Quick Reference
 

@@ -4,12 +4,14 @@ from datetime import datetime, timedelta
 import pytest
 
 from ghosalquant.brokerage.open_orders import OpenOrderQueries
+from ghosalquant.brokerage.order_book_sim import OrderBookSimBroker
 from ghosalquant.brokerage.simulated import SimBroker
 from ghosalquant.core import metadata_keys
 from ghosalquant.core.types import (
     Bar,
     BookLevel,
     Fill,
+    Liquidity,
     Order,
     OrderBook,
     PublicTrade,
@@ -53,7 +55,13 @@ def _bar(seconds: float, close: float, symbol: str = "TEST") -> Bar:
     return Bar(time_stamp=_at(seconds), symbol=symbol, open=close, high=close, low=close, close=close, volume=1000.0)
 
 
-def _sim_broker(**overrides) -> SimBroker:
+def _sim_broker(**overrides) -> OrderBookSimBroker:
+    settings = dict(maker_rebate_bps=0.0, taker_fee_bps=0.0, seed=3)
+    settings.update(overrides)
+    return OrderBookSimBroker(**settings)
+
+
+def _bar_broker(**overrides) -> SimBroker:
     settings = dict(
         spread_bps=0.0,
         slippage_mean_bps=0.0,
@@ -79,8 +87,8 @@ class PassThroughRule:
 
 class TouchStrategy(OrderBookStrategy):
     """
-    Flat with nothing resting: buy 5 at the best ask (a taker).
-    Long with no resting sell: offer the whole position at the best bid.
+    Flat with nothing resting: rest a bid at the best bid.
+    Long with no resting offer: rest the position at the best ask.
     Records everything the loop hands it.
     """
 
@@ -104,24 +112,24 @@ class TouchStrategy(OrderBookStrategy):
     def on_order_book(self, book: OrderBook, context: StrategyContext):
         self.books.append(book)
         self.contexts.append(context)
-        if context.position_quantity == 0.0 and not context.has_open_orders and book.best_ask is not None:
+        if context.position_quantity == 0.0 and not context.has_open_orders and book.best_bid is not None:
             return Signal(
                 time_stamp=book.time_stamp,
                 symbol=book.symbol,
                 signal_type=SignalType.BUY,
-                ref_price=book.best_ask.price,
+                ref_price=book.best_bid.price,
                 quantity=self.quantity,
-                metadata={metadata_keys.LIMIT_PRICE: book.best_ask.price},
+                metadata={metadata_keys.LIMIT_PRICE: book.best_bid.price},
             )
-        if context.position_quantity > 0.0 and context.open_sell_quantity == 0.0 and book.best_bid is not None:
+        if context.position_quantity > 0.0 and context.open_sell_quantity == 0.0 and book.best_ask is not None:
             return [
                 Signal(
                     time_stamp=book.time_stamp,
                     symbol=book.symbol,
                     signal_type=SignalType.SELL,
-                    ref_price=book.best_bid.price,
+                    ref_price=book.best_ask.price,
                     quantity=context.position_quantity,
-                    metadata={metadata_keys.LIMIT_PRICE: book.best_bid.price},
+                    metadata={metadata_keys.LIMIT_PRICE: book.best_ask.price},
                 )
             ]
         return None
@@ -215,60 +223,12 @@ def test_sim_broker_implements_open_order_queries():
     assert broker.open_order_views() == ()
 
 
-# ----- SimBroker touch-crossing fill ----- #
-
-def test_sim_broker_touch_fill_caps_at_displayed_quantity_and_honours_limit():
-    broker = _sim_broker()
-    broker.on_order_book(_book(0, [(100.0, 10)], [(100.5, 10)]))
-    broker.submit(
-        Order(time_stamp=_at(0), symbol="TEST", side=SignalType.BUY, quantity=5.0, ref_price=100.5,
-              metadata={metadata_keys.LIMIT_PRICE: 100.5})
-    )
-    assert broker.get_fills() == []
-
-    # ask above the limit: rests
-    broker.on_order_book(_book(1, [(100.0, 10)], [(100.6, 10)]))
-    assert broker.get_fills() == []
-
-    # ask at the limit, 2 displayed: partial
-    broker.on_order_book(_book(2, [(100.0, 10)], [(100.5, 2)]))
-    fills = broker.get_fills()
-    assert len(fills) == 1
-    assert fills[0].quantity == 2.0
-    assert fills[0].price == 100.5
-    assert fills[0].time_stamp == _at(2)
-    assert broker.open_order_views("TEST")[0].remaining_quantity == 3.0
-
-    # no ask: rests
-    broker.on_order_book(_book(3, [(100.0, 10)], []))
-    assert broker.get_fills() == []
-
-    # ask through the limit: remainder fills at the touch
-    broker.on_order_book(_book(4, [(100.0, 10)], [(100.4, 10)]))
-    fills = broker.get_fills()
-    assert len(fills) == 1
-    assert fills[0].quantity == 3.0
-    assert fills[0].price == 100.4
-    assert broker.open_order_views("TEST") == ()
+# ----- Broker behaviour through the loop ----- #
 
 
-def test_sim_broker_market_order_crosses_the_touch_and_respects_latency():
-    broker = _sim_broker(min_latency_ms=1500, max_latency_ms=1500)
-    broker.on_order_book(_book(0, [(100.0, 10)], [(100.5, 10)]))
-    broker.submit(Order(time_stamp=_at(0), symbol="TEST", side=SignalType.SELL, quantity=1.0, ref_price=100.0))
 
-    broker.on_order_book(_book(1, [(100.1, 10)], [(100.5, 10)]))
-    assert broker.get_fills() == []
-
-    broker.on_order_book(_book(2, [(100.2, 10)], [(100.5, 10)]))
-    fills = broker.get_fills()
-    assert len(fills) == 1
-    assert fills[0].side is SignalType.SELL
-    assert fills[0].price == 100.2
-
-
-def test_sim_broker_public_trade_advances_market_time_without_filling():
-    broker = _sim_broker()
+def test_bar_broker_ignores_books_and_prints():
+    broker = _bar_broker()
     broker.on_public_trade(_trade(0, 100.0))
     broker.submit(Order(time_stamp=_at(0), symbol="TEST", side=SignalType.BUY, quantity=1.0, ref_price=100.0))
     broker.on_public_trade(_trade(1, 99.0))
@@ -347,26 +307,27 @@ def test_list_datasource_accepts_bars_keyword_for_compatibility():
 
 def _touch_scenario():
     """
-    t0 flat -> BUY 5 @ 100.5; t1 fills 2 -> SELL 2 @ 100.2 while the BUY remainder rests;
-    t2 one-sided book, nothing fills; t3 SELL fills @ 100.3, BUY rests (ask above limit);
-    t4 BUY remainder fills @ 100.5 -> SELL 3 @ 100.4. A print at t2.5 marks in between.
+    t0 rest BUY 5 @ 100.0; t0.5 it is still queued; t1 a print at the bid fills it.
+    t2 long, so rest the offer at 100.5; t2.5 it is queued; t3 a print through it fills it.
+    t4 flat again, so a fresh bid rests.
     """
     books = [
-        _book(0, [(100.0, 10)], [(100.5, 3)]),
-        _book(1, [(100.2, 10)], [(100.5, 2)]),
-        _book(2, [(100.1, 1)], []),
-        _book(3, [(100.3, 10)], [(100.6, 10)]),
-        _book(4, [(100.4, 10)], [(100.5, 10)]),
+        _book(0, [(100.0, 10)], [(100.5, 10)]),
+        _book(0.5, [(100.0, 10)], [(100.5, 10)]),
+        _book(2, [(100.0, 10)], [(100.5, 10)]),
+        _book(2.5, [(100.0, 10)], [(100.5, 10)]),
+        _book(4, [(100.2, 10)], [(100.6, 10)]),
     ]
-    prints = [_trade(2.5, 100.15)]
+    prints = [_trade(1, 100.0, 5.0), _trade(3, 100.7, 5.0)]
     return books, prints
+
 
 
 def test_order_book_strategy_round_trip_through_execution_system():
     books, prints = _touch_scenario()
     strategy = TouchStrategy()
     rule = PassThroughRule()
-    broker = _sim_broker()
+    broker = _sim_broker(model_queue_position=False)
     portfolio = RecordingPortfolio(init_capital=10_000.0)
 
     execution = ExecutionSystem(
@@ -380,43 +341,59 @@ def test_order_book_strategy_round_trip_through_execution_system():
 
     assert strategy.started and strategy.ended
     assert len(strategy.books) == 5
-    assert len(strategy.trades) == 1
+    assert len(strategy.trades) == 2
 
+    # Neither order crosses on submission; each waits for a print that reaches its price.
     assert [(f.side, f.quantity, f.price) for f in strategy.fills] == [
-        (SignalType.BUY, 2.0, 100.5),
-        (SignalType.SELL, 2.0, 100.3),
-        (SignalType.BUY, 3.0, 100.5),
+        (SignalType.BUY, 5.0, 100.0),
+        (SignalType.SELL, 5.0, 100.5),
     ]
+    assert all(f.liquidity is Liquidity.MAKER for f in strategy.fills)
 
-    assert [order.side for order, _ in strategy.accepted] == [SignalType.BUY, SignalType.SELL, SignalType.SELL]
-    assert all(broker_id and broker_id.startswith("SIM-") for _, broker_id in strategy.accepted)
+    assert [order.side for order, _ in strategy.accepted] == [SignalType.BUY, SignalType.SELL, SignalType.BUY]
+    assert all(broker_id and broker_id.startswith("OBS-") for _, broker_id in strategy.accepted)
 
-    first, second, third, fourth, fifth = strategy.contexts
+    first, queued, after_buy, offered, flat = strategy.contexts
     assert first.position_quantity == 0.0 and not first.has_open_orders
-    assert second.position_quantity == 2.0
-    assert second.average_entry_price == pytest.approx(100.5)
-    assert second.open_buy_quantity == 3.0 and second.open_sell_quantity == 0.0
-    assert third.open_buy_quantity == 3.0 and third.open_sell_quantity == 2.0
-    assert third.open_quantity_at(100.2, SignalType.SELL) == 2.0
-    assert fourth.position_quantity == 0.0 and fourth.open_buy_quantity == 3.0
-    assert fifth.position_quantity == 3.0 and fifth.open_sell_quantity == 0.0
+    assert queued.open_buy_quantity == 5.0 and queued.position_quantity == 0.0
+    assert queued.open_quantity_at(100.0, SignalType.BUY) == 5.0
+    assert after_buy.position_quantity == 5.0 and after_buy.open_sell_quantity == 0.0
+    assert after_buy.average_entry_price == pytest.approx(100.0)
+    assert offered.open_sell_quantity == 5.0
+    assert flat.position_quantity == 0.0
 
-    sell_evaluation = rule.contexts[1]
-    assert [view.side for view in sell_evaluation.open_orders] == [SignalType.BUY]
-    assert sell_evaluation.open_orders[0].remaining_quantity == 3.0
-    assert sell_evaluation.price_history is None
+    assert len(rule.contexts) == 3
+    assert rule.contexts[0].open_orders == ()
+    assert rule.contexts[0].price_history is None
 
-    # mids, except the one-sided book at t2 (no mark) and the print at t2.5
-    assert [(ts, price) for ts, _, price in portfolio.marks] == [
-        (_at(0), pytest.approx(100.25)),
-        (_at(1), pytest.approx(100.35)),
-        (_at(2.5), pytest.approx(100.15)),
-        (_at(3), pytest.approx(100.45)),
-        (_at(4), pytest.approx(100.45)),
-    ]
-    assert portfolio.open_qty_by_symbol == {"TEST": 3.0}
-    assert portfolio.last_prices["TEST"] == 100.5  # BasicPortfolio re-marks a new lot at its fill price
-    assert broker.open_order_views("TEST")[0].side is SignalType.SELL
+    assert portfolio.open_qty_by_symbol == {}
+    assert broker.open_order_views("TEST")[0].side is SignalType.BUY
+
+
+
+def test_risk_context_sees_resting_orders():
+    class AlwaysBid(OrderBookStrategy):
+        def on_start(self): ...
+        def on_end(self): ...
+
+        def on_order_book(self, book, context):
+            return Signal(book.time_stamp, book.symbol, SignalType.BUY, book.best_bid.price,
+                          quantity=1.0, limit_price=book.best_bid.price, liquidity=Liquidity.MAKER)
+
+    rule = PassThroughRule()
+    execution = ExecutionSystem(
+        data_src=ListDataSource([_book(0, [(100.0, 10)], [(100.5, 10)]),
+                                 _book(1, [(100.0, 10)], [(100.5, 10)])]),
+        strategy=AlwaysBid(),
+        risk_manager=RiskManager(rules=[rule]),
+        portfolio=BasicPortfolio(init_capital=10_000.0),
+        broker=_sim_broker(model_queue_position=False),
+    )
+    _run(execution)
+
+    assert rule.contexts[0].open_orders == ()
+    assert [view.side for view in rule.contexts[1].open_orders] == [SignalType.BUY]
+    assert rule.contexts[1].open_orders[0].remaining_quantity == 1.0
 
 
 def test_portfolio_is_marked_from_the_raw_book_not_the_brokers_adjusted_view():
@@ -447,25 +424,26 @@ def test_one_sided_book_keeps_previous_mark_and_conservative_policy_marks_at_bid
     strategy = TouchStrategy()
     portfolio = BasicPortfolio(init_capital=10_000.0)
     execution = ExecutionSystem(
-        # Long 5 after t1; the SELL @ 100.0 rests below t2's bid, so the mark is t2's bid and
-        # neither the ask-only book nor the higher print moves it.
+        # Rest a bid, let a print fill it, then hold: the mark tracks the bid, a one-sided book
+        # leaves it alone, and a print above it never raises a long's mark.
         data_src=ListDataSource([
             _book(0, [(100.0, 10)], [(100.5, 10)]),
-            _book(1, [(100.0, 10)], [(100.5, 10)]),
+            _trade(1, 100.0, 5.0),
             _book(2, [(99.9, 10)], [(100.4, 10)]),
             _book(3, [], [(100.4, 10)]),
-            _trade(4, 103.0),
+            _trade(4, 100.2, 1.0),
         ]),
         strategy=strategy,
         risk_manager=RiskManager(rules=[PassThroughRule()]),
         portfolio=portfolio,
-        broker=_sim_broker(),
+        broker=_sim_broker(model_queue_position=False),
         mark_policy=MarkPolicy.CONSERVATIVE,
     )
     _run(execution)
 
     assert portfolio.open_qty_by_symbol == {"TEST": 5.0}
     assert portfolio.last_prices["TEST"] == pytest.approx(99.9)
+
 
 
 def test_bar_strategy_is_unaffected_by_books_and_prints_in_the_stream():
@@ -481,7 +459,7 @@ def test_bar_strategy_is_unaffected_by_books_and_prints_in_the_stream():
         strategy=strategy,
         risk_manager=RiskManager(rules=[PassThroughRule()]),
         portfolio=portfolio,
-        broker=_sim_broker(),
+        broker=_bar_broker(),
     )
     _run(execution)
 
@@ -569,7 +547,7 @@ def test_flush_does_not_duplicate_the_last_bar_point():
         strategy=BarOnlyStrategy(),
         risk_manager=RiskManager(rules=[]),
         portfolio=portfolio,
-        broker=_sim_broker(),
+        broker=_bar_broker(),
     )
     _run(execution)
 
@@ -597,7 +575,7 @@ def test_bars_still_snapshot_every_bar_and_feed_price_history():
         strategy=BuyOnLast(),
         risk_manager=RiskManager(rules=[rule]),
         portfolio=portfolio,
-        broker=_sim_broker(),
+        broker=_bar_broker(),
         snapshot_interval=timedelta(hours=1),
     )
     _run(execution)

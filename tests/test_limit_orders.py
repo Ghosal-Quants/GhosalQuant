@@ -4,6 +4,7 @@ import pytest
 from ib_insync import LimitOrder, MarketOrder
 
 from ghosalquant.brokerage.ibkr import IBKRBroker
+from ghosalquant.brokerage.order_book_sim import OrderBookSimBroker
 from ghosalquant.brokerage.simulated import SimBroker
 from ghosalquant.core import metadata_keys
 from ghosalquant.core.types import Bar, BookLevel, Liquidity, Order, OrderBook, Signal, SignalType
@@ -16,6 +17,10 @@ T0 = datetime(2025, 11, 15, 9, 30, 0)
 
 def _bar(minute: int, open_: float) -> Bar:
     return Bar(time_stamp=T0.replace(minute=30 + minute), symbol="TEST", open=open_, high=open_ + 1.0, low=open_ - 1.0, close=open_, volume=1000.0)
+
+
+def _at(second: int) -> datetime:
+    return T0.replace(second=second)
 
 
 def _book(second: int, bid: tuple[float, float], ask: tuple[float, float]) -> OrderBook:
@@ -128,22 +133,24 @@ def test_sim_broker_market_orders_still_fill_on_the_next_bar():
     assert len(fills) == 1 and fills[0].price == 104.0
 
 
-def test_sim_broker_touch_fill_uses_the_field_and_reports_taker_liquidity():
-    broker = _sim_broker()
+
+def test_book_broker_uses_the_limit_field_and_reports_taker_liquidity():
+    broker = OrderBookSimBroker(maker_rebate_bps=0.0, taker_fee_bps=0.0, seed=5)
+
+    # A taker whose limit the book does not reach fills nothing and does not rest.
     broker.on_order_book(_book(0, (100.0, 10), (100.5, 10)))
-    order_id = broker.submit(
-        Order(time_stamp=T0, symbol="TEST", side=SignalType.BUY, quantity=4.0, ref_price=100.5, limit_price=100.4, liquidity=Liquidity.MAKER)
-    )
-    view = broker.open_order_views("TEST")[0]
-    assert view.broker_order_id == order_id and view.limit_price == 100.4 and view.liquidity is Liquidity.MAKER
-
-    broker.on_order_book(_book(1, (100.0, 10), (100.5, 10)))
+    broker.submit(Order(time_stamp=T0, symbol="TEST", side=SignalType.BUY, quantity=4.0,
+                        ref_price=100.5, limit_price=100.4, liquidity=Liquidity.TAKER))
     assert broker.get_fills() == []
+    assert broker.open_order_views("TEST") == ()
 
-    broker.on_order_book(_book(2, (100.0, 10), (100.4, 10)))
+    # Once the ask reaches the limit it sweeps immediately, at the level rather than the limit.
+    broker.on_order_book(_book(1, (100.0, 10), (100.3, 10)))
+    broker.submit(Order(time_stamp=_at(1), symbol="TEST", side=SignalType.BUY, quantity=4.0,
+                        ref_price=100.5, limit_price=100.4, liquidity=Liquidity.TAKER))
     fills = broker.get_fills()
-    assert len(fills) == 1 and fills[0].price == 100.4 and fills[0].liquidity is Liquidity.TAKER
-
+    assert len(fills) == 1 and fills[0].price == 100.3
+    assert fills[0].liquidity is Liquidity.TAKER
 
 # ----- IBKRBroker sends limit orders ----- #
 
