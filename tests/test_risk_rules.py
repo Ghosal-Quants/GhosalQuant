@@ -31,10 +31,12 @@ from ghosalquant.risk import (
     RiskManager,
     SignalQuantityCap,
     SymbolCapitalFractionSizer,
+    TickRounding,
     plan_cash_reclamation,
     resting_buy_notional,
     sizing_capital,
 )
+from ghosalquant.util.rounding import ceil_to_tick, floor_to_tick, round_to_tick
 
 T0 = datetime(2026, 4, 1, 14, 30)
 
@@ -362,3 +364,94 @@ def test_a_blocked_order_is_logged_not_printed(capsys, caplog):
     assert capsys.readouterr().out == ""
     assert "MaxOpenPositions blocked" in caplog.text
     assert "ConfidenceSizer blocked" in caplog.text
+
+
+# ----- Prices the venue will accept ----- #
+
+def test_rounding_to_a_tick_beats_float_rounding():
+    # round() works on a binary float that cannot hold 193.375, so it rounds the wrong way.
+    assert round(193.375, 2) == 193.38
+    assert round_to_tick(193.375, 0.01) == 193.38
+    assert round_to_tick(0.125, 0.01) == 0.13
+    assert round(0.125, 2) == 0.12
+
+
+def test_a_tick_can_be_any_increment():
+    assert floor_to_tick(193.375, 0.05) == 193.35
+    assert ceil_to_tick(193.375, 0.05) == 193.40
+    assert floor_to_tick(1_234.0, 25.0) == 1_225.0
+
+    with pytest.raises(ValueError):
+        floor_to_tick(1.0, 0.0)
+
+
+def test_rounding_a_limit_can_only_move_it_in_the_traders_favour():
+    rule = TickRounding(tick_size=0.01)
+    buy = draft(price=193.375)
+    buy.limit_price = 193.375
+    sell = draft(side=SignalType.SELL, price=193.375)
+    sell.limit_price = 193.375
+
+    assert rule.apply(buy, RiskContext()) is True
+    assert rule.apply(sell, RiskContext()) is True
+
+    # A buy never pays more than it meant to; a sell never accepts less.
+    assert buy.limit_price == 193.37
+    assert sell.limit_price == 193.38
+
+
+def test_a_market_order_is_left_alone():
+    rule = TickRounding()
+    market = draft()
+    market.limit_price = None
+
+    assert rule.apply(market, RiskContext()) is True
+    assert market.limit_price is None
+
+
+def test_a_per_symbol_tick_overrides_the_default():
+    rule = TickRounding(tick_size=0.01, tick_size_by_symbol={"BRK": 0.05})
+    penny, nickel = draft(symbol="AAPL", price=10.0), draft(symbol="BRK", price=10.0)
+    penny.limit_price = 10.024
+    nickel.limit_price = 10.024
+
+    rule.apply(penny, RiskContext())
+    rule.apply(nickel, RiskContext())
+
+    assert penny.limit_price == 10.02
+    assert nickel.limit_price == 10.00
+
+
+def test_the_metadata_copy_of_the_limit_is_kept_in_step():
+    rule = TickRounding()
+    order = draft(**{metadata_keys.LIMIT_PRICE: 193.375})
+    order.limit_price = 193.375
+
+    rule.apply(order, RiskContext())
+
+    assert order.metadata[metadata_keys.LIMIT_PRICE] == 193.37
+
+
+def test_a_price_that_rounds_away_to_nothing_is_dropped():
+    rule = TickRounding(tick_size=0.01)
+    dust = draft(price=0.004)
+    dust.limit_price = 0.004
+
+    assert rule.apply(dust, RiskContext()) is False
+
+
+def test_a_sized_order_comes_out_tradable():
+    """The whole point: capital sizing and a book mid produce something a venue accepts."""
+    rules = [
+        SymbolCapitalFractionSizer(capital=50_000.0, default_max_notional_fraction=0.07),
+        TickRounding(tick_size=0.01),
+        IntegerQuantity(),
+    ]
+    order = draft(price=193.37)
+    order.limit_price = (193.37 + 193.38) / 2  # straight off the book mid
+
+    for rule in rules:
+        assert rule.apply(order, RiskContext()) is True
+
+    assert order.quantity == int(order.quantity)
+    assert order.limit_price == 193.37

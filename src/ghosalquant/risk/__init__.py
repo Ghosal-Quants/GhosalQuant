@@ -17,6 +17,7 @@ from .rules.rule_max_symbol_exposure import MaxSymbolExposure, remaining_exposur
 from .rules.rule_regime_filter import RegimeFilter
 from .rules.rule_signal_quantity_cap import SignalQuantityCap
 from .rules.rule_symbol_capital_sizer import SymbolCapitalFractionSizer
+from .rules.rule_tick_rounding import TickRounding
 from .sizing import current_equity, sizing_capital
 from .types import OrderDraft, RiskContext, RiskRule
 
@@ -39,6 +40,7 @@ __all__ = [
     "RegimeFilter",
     "SignalQuantityCap",
     "SymbolCapitalFractionSizer",
+    "TickRounding",
     "current_equity",
     "sizing_capital",
     "OrderDraft",

@@ -10,6 +10,7 @@ from .rules.rule_integer_quantity import IntegerQuantity
 from .rules.rule_max_symbol_exposure import MaxSymbolExposure
 from .rules.rule_signal_quantity_cap import SignalQuantityCap
 from .rules.rule_symbol_capital_sizer import SymbolCapitalFractionSizer
+from .rules.rule_tick_rounding import TickRounding
 from .cash_allocation import CashAllocationConfig, CashAllocationRule
 from ..util.config import RiskConfig, RiskRuleConfig
 
@@ -106,6 +107,16 @@ def make_cash_allocation(p: dict[str, Any]) -> CashAllocationRule:
     )
 
 
+def make_tick_rounding(p: dict[str, Any]) -> TickRounding:
+    return TickRounding(
+        tick_size=float(p.get("tick_size", 0.01)),
+        tick_size_by_symbol={
+            str(symbol): float(size)
+            for symbol, size in (p.get("tick_size_by_symbol") or {}).items()
+        },
+    )
+
+
 def _optional_float(value: Any) -> float | None:
     return None if value is None else float(value)
 
@@ -121,6 +132,7 @@ _RULES = {
     "MaxSymbolExposure": make_max_symbol_exposure,
     "SymbolCapitalFractionSizer": make_symbol_capital_sizer,
     "CashAllocation": make_cash_allocation,
+    "TickRounding": make_tick_rounding,
 }
 
 

@@ -469,8 +469,15 @@ Risk management sits between signal generation and order execution. The `RiskMan
 | `SymbolCapitalFractionSizer` | Sizes a `BUY` by the money it should spend rather than the units it should buy, topping up towards each symbol's share of capital. |
 | `MaxSymbolExposure` | Caps one symbol's notional as a fraction of sizing capital, counting resting buys and charging a taker's fee into the ceiling. Trims rather than blocks where there is room. |
 | `CashAllocationRule` | Keeps dry powder: trims a `BUY` to the tightest of the account, symbol, bucket and per-order ceilings on how much may sit in resting buys. |
+| `TickRounding` | Rounds a limit price to one the venue accepts. A buy floors and a sell ceilings, so it can only move the price in the trader's favour. `tick_size_by_symbol` overrides the default per instrument. |
 
 Rules report through `logging`, one logger per rule module, so a backtest is quiet unless you ask for it.
+
+A quote taken from a book mid and sized by capital lands between ticks and at a fractional quantity — `193.375`
+for `18.1000155` shares — and a real venue rejects both. `TickRounding` and `IntegerQuantity` are what make a
+sized order tradable, so a live chain wants them last. `ghosalquant.util.rounding` holds the primitives
+(`floor_to_tick`, `ceil_to_tick`, `round_to_tick`); they use `Decimal` because a binary float cannot hold `193.375`
+and `round(193.375, 2)` answers `193.38` while `round(0.125, 2)` answers `0.12`.
 
 `sizing_capital(context, capital=..., reference_capital=...)` in `ghosalquant.risk.sizing` is what the
 capital-aware rules size from. It is fixed at `capital` until `reference_capital` is given, and then scales with
