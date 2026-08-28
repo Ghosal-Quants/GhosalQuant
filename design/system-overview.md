@@ -299,7 +299,10 @@ infers either — `Contract.from_occ(symbol)` reads the 21-character US option f
 calls it for you. A symbol means what it was registered as, not what its shape suggests.
 
 `ExecutionSystem(..., contracts=...)` passes it to `RiskContext.contracts` and to `StrategyContext.contract`, which
-is the contract for that event's symbol.
+is the contract for that event's symbol. `BasicPortfolio(..., contracts=...)` takes it too, because the multiplier
+is where a price becomes money: one contract at $5.00 costs $500, not $5. Everything that turns a price into an
+amount honours it — cash, cost basis, marks, realised P&L, and the exposure, sizing and cash-allocation rules — so
+a quantity stays a count of contracts and a premium stays a premium.
 
 ### 2.9 Order-Book Market Data
 Alongside `Bar`, a data source may yield the two order-book event types. All three are `MarketEvent`s.

@@ -3,6 +3,7 @@ from typing import Callable, Iterable, Mapping
 import logging
 
 from ..core import metadata_keys
+from ..core.contracts import ContractRegistry
 from ..core.types import OpenOrderView, SignalType
 from .sizing import sizing_capital
 from .types import OrderDraft, RiskContext, RiskRule
@@ -81,8 +82,10 @@ def resting_buy_notional(
     *,
     symbol: str | None = None,
     bucket: str | None = None,
+    contracts: ContractRegistry | None = None,
 ) -> float:
     """What the resting buys already reserve, optionally for one symbol or one bucket."""
+    registry = contracts if contracts is not None else ContractRegistry()
     total = 0.0
     for view in open_orders:
         if view.order.side is not SignalType.BUY:
@@ -92,7 +95,8 @@ def resting_buy_notional(
         if bucket is not None and _view_bucket(view) != bucket:
             continue
         price = view.limit_price or view.order.ref_price
-        total += max(0.0, float(view.remaining_quantity)) * max(0.0, float(price or 0.0))
+        unit = max(0.0, float(price or 0.0)) * registry.get(view.symbol).multiplier
+        total += max(0.0, float(view.remaining_quantity)) * unit
     return total
 
 
@@ -128,11 +132,14 @@ class CashAllocationRule(RiskRule):
         )
         bucket = self.classify(draft)
         headroom = min(
-            capital * self.config.total_fraction - resting_buy_notional(context.open_orders),
+            capital * self.config.total_fraction
+            - resting_buy_notional(context.open_orders, contracts=context.contracts),
             capital * self.config.max_symbol_fraction
-            - resting_buy_notional(context.open_orders, symbol=draft.symbol),
+            - resting_buy_notional(
+                context.open_orders, symbol=draft.symbol, contracts=context.contracts
+            ),
             capital * self.config.bucket_fraction(bucket)
-            - resting_buy_notional(context.open_orders, bucket=bucket),
+            - resting_buy_notional(context.open_orders, bucket=bucket, contracts=context.contracts),
             capital * self.config.max_order_fraction(bucket),
         )
         draft.metadata.update({
@@ -145,7 +152,7 @@ class CashAllocationRule(RiskRule):
             logger.info("CashAllocation blocked BUY %s: no headroom in %s", draft.symbol, bucket)
             return False
 
-        allowed = headroom / float(draft.price)
+        allowed = headroom / (float(draft.price) * context.contracts.get(draft.symbol).multiplier)
         requested = float(draft.quantity)
         if requested > allowed:
             draft.quantity = allowed

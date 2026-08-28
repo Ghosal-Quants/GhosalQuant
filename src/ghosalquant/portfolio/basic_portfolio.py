@@ -1,6 +1,7 @@
 from datetime import datetime
 from typing import Iterable, Mapping
 
+from ..core.contracts import ContractRegistry
 from ..core.types import Trade, EquityPoint, Fill, SignalType, Bar
 from ..portfolio.portfolio_base import Portfolio
 
@@ -13,7 +14,9 @@ class BasicPortfolio(Portfolio):
     def __init__(
             self,
             init_capital: float = 10_000.0,
+            contracts: ContractRegistry | None = None,
     ) -> None:
+        self._contracts = contracts if contracts is not None else ContractRegistry()
         self._init_capital: float = init_capital
         self._cash: float = init_capital
 
@@ -116,7 +119,8 @@ class BasicPortfolio(Portfolio):
         quantity = self._open_qty_by_symbol.get(symbol, 0.0)
         if quantity <= 0.0:
             return None
-        return self._open_cost_by_symbol.get(symbol, 0.0) / quantity
+        # Cost is money and quantity is contracts, so the multiplier divides back out.
+        return self._open_cost_by_symbol.get(symbol, 0.0) / (quantity * self._multiplier(symbol))
 
     def snapshot_equity(self, time_stamp: datetime, prices: dict[str, float]) -> None:
         positions_value: float = 0.0
@@ -127,11 +131,9 @@ class BasicPortfolio(Portfolio):
                 raise KeyError(f"Price for symbol {symbol} not provided in prices dict.")
 
             current_price: float = float(prices[symbol])
-            positions_value += quantity * current_price
-            unrealised_pnl += (
-                quantity * current_price
-                - self._open_cost_by_symbol.get(symbol, 0.0)
-            )
+            value = quantity * current_price * self._multiplier(symbol)
+            positions_value += value
+            unrealised_pnl += value - self._open_cost_by_symbol.get(symbol, 0.0)
 
         equity = self._cash + positions_value
 
@@ -224,7 +226,7 @@ class BasicPortfolio(Portfolio):
 
     def _open(self, fill: Fill) -> None:
         commission: float = fill.commission or 0.0
-        notional: float = fill.price * fill.quantity
+        notional: float = fill.price * fill.quantity * self._multiplier(fill.symbol)
         total_cost: float = notional + commission
 
         if total_cost > self._cash:
@@ -251,8 +253,15 @@ class BasicPortfolio(Portfolio):
         self._next_trade_id += 1
         return trade_id
 
+    def _multiplier(self, symbol: str) -> float:
+        return self._contracts.get(symbol).multiplier
+
     def _record_open_trade(self, trade: Trade, *, notional: float | None = None) -> None:
-        cost = trade.entry_price * trade.size if notional is None else notional
+        cost = (
+            trade.entry_price * trade.size * self._multiplier(trade.symbol)
+            if notional is None
+            else notional
+        )
         self._open_trades.setdefault(trade.symbol, {})[trade.id] = trade
         self._open_qty_by_symbol[trade.symbol] = (
             self._open_qty_by_symbol.get(trade.symbol, 0.0) + float(trade.size)
@@ -270,6 +279,7 @@ class BasicPortfolio(Portfolio):
         close_qty: float = fill.quantity
         close_price: float = fill.price
         commission: float = fill.commission or 0.0
+        multiplier: float = self._multiplier(symbol)
 
         trade_ids_in_order = sorted(trades.keys(), reverse=True)  # LIFO
 
@@ -289,20 +299,20 @@ class BasicPortfolio(Portfolio):
             self._open_cost_by_symbol[symbol] = max(
                 0.0,
                 self._open_cost_by_symbol.get(symbol, 0.0)
-                - trade.entry_price * qty_to_close,
+                - trade.entry_price * qty_to_close * multiplier,
             )
 
             leg_commission = commission * (qty_to_close / fill.quantity)
 
-            notional = qty_to_close * close_price
-            realised = (close_price - trade.entry_price) * qty_to_close - leg_commission
+            notional = qty_to_close * close_price * multiplier
+            realised = (close_price - trade.entry_price) * qty_to_close * multiplier - leg_commission
             self._realised_pnl += realised
             self._cash += notional - leg_commission
             self._fees_paid += leg_commission
 
             if trade.size <= close_qty:
                 trade.close_time = fill.time_stamp
-                trade.realised_pnl = trade.unrealised_pnl(close_price) - leg_commission
+                trade.realised_pnl = trade.unrealised_pnl(close_price) * multiplier - leg_commission
                 self._closed_trades.append(trade)
                 close_qty -= trade.size
                 del trades[trade_id]
@@ -319,7 +329,9 @@ class BasicPortfolio(Portfolio):
                     open_time=trade.open_time,
                     close_time=fill.time_stamp,
                 )
-                closed_trade.realised_pnl = (close_price - trade.entry_price) * qty_to_close - leg_commission
+                closed_trade.realised_pnl = (
+                    (close_price - trade.entry_price) * qty_to_close * multiplier - leg_commission
+                )
                 self._closed_trades.append(closed_trade)
 
                 trade.size -= qty_to_close

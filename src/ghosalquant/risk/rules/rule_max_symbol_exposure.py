@@ -63,7 +63,7 @@ class MaxSymbolExposure(RiskRule):
         )
         notional_limit = equity * self.max_notional_fraction
         committed = self._committed_notional(draft, context)
-        unit_cost = self._unit_cost(draft)
+        unit_cost = self._unit_cost(draft, context)
         remaining = remaining_exposure_quantity(
             notional_limit=notional_limit, committed_notional=committed, unit_cost=unit_cost
         )
@@ -92,19 +92,23 @@ class MaxSymbolExposure(RiskRule):
         return True
 
     def _committed_notional(self, draft: OrderDraft, context: RiskContext) -> float:
+        multiplier = context.contracts.get(draft.symbol).multiplier
         quantity = float(context.open_qty_by_symbol.get(draft.symbol, 0.0))
         held = float(
-            context.position_cost_by_symbol.get(draft.symbol, quantity * float(draft.price))
+            context.position_cost_by_symbol.get(
+                draft.symbol, quantity * float(draft.price) * multiplier
+            )
         )
         resting = sum(
-            float(view.remaining_quantity) * float(view.limit_price or draft.price)
+            float(view.remaining_quantity) * float(view.limit_price or draft.price) * multiplier
             for view in context.open_orders
             if view.symbol == draft.symbol and view.order.side is SignalType.BUY
         )
         return max(0.0, held) + max(0.0, resting)
 
-    def _unit_cost(self, draft: OrderDraft) -> float:
+    def _unit_cost(self, draft: OrderDraft, context: RiskContext) -> float:
         liquidity = draft.liquidity or draft.metadata.get(metadata_keys.LIQUIDITY)
         taker = str(getattr(liquidity, "value", liquidity)).lower() == Liquidity.TAKER.value
         fee_rate = self.taker_fee_bps / 10_000.0 if taker else 0.0
-        return float(draft.price) * (1.0 + fee_rate)
+        multiplier = context.contracts.get(draft.symbol).multiplier
+        return float(draft.price) * multiplier * (1.0 + fee_rate)

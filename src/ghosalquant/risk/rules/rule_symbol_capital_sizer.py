@@ -64,8 +64,9 @@ class SymbolCapitalFractionSizer(RiskRule):
             context, capital=self.capital, reference_capital=self.reference_capital
         )
         target_notional = equity * fraction * confidence
+        unit_cost = float(draft.price) * context.contracts.get(draft.symbol).multiplier
         held_notional = float(
-            context.position_cost_by_symbol.get(draft.symbol, held * float(draft.price))
+            context.position_cost_by_symbol.get(draft.symbol, held * unit_cost)
         )
-        draft.quantity = max(0.0, target_notional - held_notional) / float(draft.price)
+        draft.quantity = max(0.0, target_notional - held_notional) / unit_cost
         return draft.quantity > 0.0 and draft.quantity >= self.min_quantity
