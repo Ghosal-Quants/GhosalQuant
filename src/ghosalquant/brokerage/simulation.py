@@ -99,6 +99,9 @@ class SimulatedBroker(Broker):
             self._apply(resting, self.fill_model.fills_for(resting, self.fill_model.view(event), context))
             if self._finished(resting):
                 self._remove(order_id)
+            elif resting.liquidity is Liquidity.TAKER and not resting.sweep_pending:
+                # A taker crosses what is displayed and cancels the rest; it never joins the book.
+                self._remove(order_id)
             elif self.max_order_age_events is not None and resting.age_events >= self.max_order_age_events:
                 self._remove(order_id)
 

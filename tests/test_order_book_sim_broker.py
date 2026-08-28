@@ -374,3 +374,38 @@ def test_end_to_end_through_execution_system():
     assert portfolio.open_qty_by_symbol == {"TEST": 3.0}
     assert portfolio.average_entry_price("TEST") == pytest.approx(100.0)
     assert all(f.commission < 0 for f in strategy.fills)
+
+
+def test_a_taker_arriving_between_quotes_waits_for_the_next_one():
+    """
+    A strategy trading one symbol off another's event submits before that symbol next quotes.
+
+    The order used to be dropped on the spot: no fill, no rejection, nothing the strategy could
+    see. It waits for the next quote instead, and crosses that rather than the one it was priced
+    against, which is what arriving late actually costs.
+    """
+    broker = OrderBookSimBroker(maker_rebate_bps=0.0, taker_fee_bps=0.0)
+    broker.on_market_event(_book(0, [(99.0, 5.0)], [(100.0, 5.0)]))
+    broker.on_market_event(_book(1, [], [], symbol="OTHER"))
+
+    broker.submit(_order(1, SignalType.BUY, 5.0, 100.5, Liquidity.TAKER))
+    assert broker.get_fills() == []
+
+    broker.on_market_event(_book(2, [(99.5, 5.0)], [(100.5, 5.0)]))
+    fills = broker.get_fills()
+
+    assert [(f.quantity, f.price) for f in fills] == [(5.0, 100.5)]
+    assert broker.open_order_views() == ()
+
+
+def test_a_taker_that_misses_its_chance_does_not_linger():
+    """One quote is the whole of a taker's life: what it cannot cross there is cancelled."""
+    broker = OrderBookSimBroker(maker_rebate_bps=0.0, taker_fee_bps=0.0)
+    broker.on_market_event(_book(0, [(99.0, 5.0)], [(100.0, 5.0)]))
+    broker.on_market_event(_book(1, [], [], symbol="OTHER"))
+
+    broker.submit(_order(1, SignalType.BUY, 5.0, 100.0, Liquidity.TAKER))
+    broker.on_market_event(_book(2, [(99.5, 5.0)], [(101.0, 5.0)]))  # moved away
+
+    assert broker.get_fills() == []
+    assert broker.open_order_views() == ()

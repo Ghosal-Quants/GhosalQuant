@@ -29,6 +29,7 @@ class RestingOrder:
     reject_on_eligibility: bool = False
     queue_ahead_quantity: float = 0.0
     age_events: int = 0
+    sweep_pending: bool = False
 
     @property
     def symbol(self) -> str:
@@ -241,15 +242,20 @@ class QueueAwareFill:
             resting.queue_ahead_quantity = _displayed_at(book, resting.side, resting.limit_price)
         if book is not None and book.time_stamp >= resting.submitted_at:
             return self._against_book(resting, self.adjusted(book), aggressor=True)
+        # No quote since the order was decided, so wait for the next one.
+        resting.sweep_pending = resting.liquidity is Liquidity.TAKER
         return ()
 
     def rests(self, resting: RestingOrder) -> bool:
-        return resting.liquidity is not Liquidity.TAKER
+        return resting.liquidity is not Liquidity.TAKER or resting.sweep_pending
 
     def fills_for(
         self, resting: RestingOrder, event: MarketEvent, context: SimulationContext
     ) -> Sequence[PlannedFill]:
         if isinstance(event, OrderBook):
+            if resting.sweep_pending:
+                resting.sweep_pending = False
+                return self._against_book(resting, event, aggressor=True)
             return self._against_book(resting, event, aggressor=False)
         if isinstance(event, PublicTrade):
             return self._against_print(resting, event)
