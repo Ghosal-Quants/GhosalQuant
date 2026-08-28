@@ -335,8 +335,10 @@ the optimum and falls away steeply above it, so overbetting a bad estimate costs
 underbetting a good one (Lillo, Mazzarisi and Tsaknaki, 2025). At +50% against -35% the break-even
 strike rate is 41.2%, so a strategy that cannot beat that is told to stop rather than sized down.
 
-`portfolio.hedging.net_delta` measures a book's exposure to one underlier in shares of it, and `hedge_quantity`
-says what to trade to flatten it. Hedging is what separates a view on volatility from a view on direction: an
+`portfolio.hedging.net_delta` measures a book's exposure to one underlier in shares of it, `net_gamma` how fast
+that exposure changes, and `hedge_quantity` says what to trade to flatten it. Discrete gamma hedging replicates
+without assuming a probability model for the underlying, the error vanishing as the rehedging interval shrinks
+(Armstrong and Bellani, 2025), which is why gamma is worth measuring rather than only delta. Hedging is what separates a view on volatility from a view on direction: an
 unhedged option makes most of its money on the underlier moving the right way, which is a bet the option was an
 expensive way to place. Note that a straddle is already close to delta-neutral at inception, so hedging one changes
 little until spot leaves the strike; it is a single-sided position that needs the hedge.

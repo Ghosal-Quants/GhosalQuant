@@ -9,7 +9,7 @@ from ghosalquant.core.contracts import Contract, ContractRegistry, Right
 from ghosalquant.core.types import BookLevel, OrderBook
 from ghosalquant.core.volatility import VolSurface
 from ghosalquant.portfolio.attribution import Attribution, attribute
-from ghosalquant.portfolio.hedging import hedge_quantity, net_delta
+from ghosalquant.portfolio.hedging import hedge_quantity, net_delta, net_gamma
 
 NOW = datetime(2026, 1, 2, 21, 0)
 SPOT = 100.0
@@ -295,3 +295,25 @@ def test_a_book_already_flat_enough_is_left_alone():
                           spot=SPOT, at=NOW) == 0.0
     assert hedge_quantity({"TEST": 40.0}, underlier="TEST", contracts=contracts, surface=surface,
                           spot=SPOT, at=NOW) == pytest.approx(-40.0)
+
+
+def test_gamma_says_how_fast_the_hedge_goes_stale():
+    """A hedge is good until spot moves; gamma is the rate at which it stops being one."""
+    surface, contracts = _hedge_setup()
+    call = option(Right.CALL, 100.0)
+    book = {call.symbol: 2.0}
+
+    gamma = net_gamma(book, underlier="TEST", contracts=contracts, surface=surface,
+                      spot=SPOT, at=NOW)
+    assert gamma > 0.0, "long options are long gamma"
+
+    here = net_delta(book, underlier="TEST", contracts=contracts, surface=surface,
+                     spot=SPOT, at=NOW)
+    higher = net_delta(book, underlier="TEST", contracts=contracts, surface=surface,
+                       spot=SPOT + 1.0, at=NOW)
+    assert higher - here == pytest.approx(gamma, rel=0.05)
+
+    # Shares carry delta but no gamma, so a hedge does not change how fast the book drifts.
+    hedged = dict(book, TEST=-here)
+    assert net_gamma(hedged, underlier="TEST", contracts=contracts, surface=surface,
+                     spot=SPOT, at=NOW) == pytest.approx(gamma)
