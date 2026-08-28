@@ -326,6 +326,12 @@ Built from real NSE NIFTY settlement prices it recovers the expected equity smil
 against 30% on the downside wing) and the expected event response: the index rose 5.45% on 2019-09-20 and
 at-the-money vol went from 14.7% to 31.4%, decaying back over the following five weeks.
 
+`portfolio.hedging.net_delta` measures a book's exposure to one underlier in shares of it, and `hedge_quantity`
+says what to trade to flatten it. Hedging is what separates a view on volatility from a view on direction: an
+unhedged option makes most of its money on the underlier moving the right way, which is a bet the option was an
+expensive way to place. Note that a straddle is already close to delta-neutral at inception, so hedging one changes
+little until spot leaves the strike; it is a single-sided position that needs the hedge.
+
 `portfolio.attribution.attribute` splits a position's change in value over one step into delta, gamma, vega and
 theta, with the remainder as `unexplained`. An option can lose while the underlier goes its way — the move earns
 through delta and gamma, time is paid back through theta, and a fall in implied vol takes the rest through vega —

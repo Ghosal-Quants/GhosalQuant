@@ -9,6 +9,7 @@ from ghosalquant.core.contracts import Contract, ContractRegistry, Right
 from ghosalquant.core.types import BookLevel, OrderBook
 from ghosalquant.core.volatility import VolSurface
 from ghosalquant.portfolio.attribution import Attribution, attribute
+from ghosalquant.portfolio.hedging import hedge_quantity, net_delta
 
 NOW = datetime(2026, 1, 2, 21, 0)
 SPOT = 100.0
@@ -235,6 +236,62 @@ def test_the_pieces_add_up_to_what_actually_happened():
 
     assert everything.total == pytest.approx(everything.explained + everything.unexplained)
     assert abs(everything.unexplained) < abs(everything.total) * 0.15
-    # Summing positions is how a book is attributed, so the pieces have to add.
     assert (everything + everything).delta == pytest.approx(everything.delta * 2)
     assert (everything + Attribution()).total == pytest.approx(everything.total)
+
+
+# ----- Hedging the direction out ----- #
+
+def _hedge_setup():
+    quotes, contracts = _chain({(95.0, 30): 0.28, (100.0, 30): 0.25, (105.0, 30): 0.27})
+    surface = VolSurface.from_quotes(quotes, contracts=contracts, spot=SPOT, at=NOW)
+    return surface, contracts
+
+
+def test_a_long_call_is_long_the_underlier_and_a_long_put_is_short_it():
+    surface, contracts = _hedge_setup()
+    call, put = option(Right.CALL, 100.0), option(Right.PUT, 100.0)
+
+    long_call = net_delta({call.symbol: 1.0}, underlier="TEST", contracts=contracts,
+                          surface=surface, spot=SPOT, at=NOW)
+    long_put = net_delta({put.symbol: 1.0}, underlier="TEST", contracts=contracts,
+                         surface=surface, spot=SPOT, at=NOW)
+
+    # One contract is a hundred shares, so an at-the-money call is worth about fifty of them.
+    assert 30.0 < long_call < 70.0
+    assert -70.0 < long_put < -30.0
+
+
+def test_shares_count_as_themselves_and_other_underliers_do_not():
+    surface, contracts = _hedge_setup()
+    call = option(Right.CALL, 100.0)
+
+    mixed = {call.symbol: 1.0, "TEST": -40.0, "SOMETHINGELSE": 500.0}
+    only_option = net_delta({call.symbol: 1.0}, underlier="TEST", contracts=contracts,
+                            surface=surface, spot=SPOT, at=NOW)
+    assert net_delta(mixed, underlier="TEST", contracts=contracts, surface=surface,
+                     spot=SPOT, at=NOW) == pytest.approx(only_option - 40.0)
+
+
+def test_the_hedge_is_what_flattens_the_book():
+    surface, contracts = _hedge_setup()
+    call = option(Right.CALL, 100.0)
+    book = {call.symbol: 2.0}
+
+    trade = hedge_quantity(book, underlier="TEST", contracts=contracts, surface=surface,
+                           spot=SPOT, at=NOW)
+    assert trade < 0.0, "long calls are hedged by selling the underlier"
+
+    hedged = dict(book, TEST=trade)
+    assert net_delta(hedged, underlier="TEST", contracts=contracts, surface=surface,
+                     spot=SPOT, at=NOW) == pytest.approx(0.0, abs=1e-9)
+
+
+def test_a_book_already_flat_enough_is_left_alone():
+    """Chasing the last fraction of a share costs more in spread than the delta it removes."""
+    surface, contracts = _hedge_setup()
+
+    assert hedge_quantity({"TEST": 0.4}, underlier="TEST", contracts=contracts, surface=surface,
+                          spot=SPOT, at=NOW) == 0.0
+    assert hedge_quantity({"TEST": 40.0}, underlier="TEST", contracts=contracts, surface=surface,
+                          spot=SPOT, at=NOW) == pytest.approx(-40.0)
