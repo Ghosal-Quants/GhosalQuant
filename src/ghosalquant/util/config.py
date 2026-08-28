@@ -1,5 +1,5 @@
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, time, datetime
 from enum import Enum
 from typing import Any
@@ -40,8 +40,37 @@ class PolygonConfig:
     parquet_path: str
     base_resolution: str = "1Min" # The resolution of the underlying data
 
-# "iex" is what a free account gets; "sip" is the full consolidated tape. The option feeds
-# stream quotes and trades but no bars.
+# Beside the code that writes them, so a run from another directory still finds them.
+_DATA_DIR = Path(__file__).resolve().parents[1] / "data_layer" / "data"
+
+
+@dataclass(frozen=True, slots=True)
+class StaticDataConfig:
+    """
+    Where the static parquet datasets live, and what the Polygon downloader asks for.
+
+    One-minute bars are canonical and coarser ones derive from them, so the aggregation is a
+    multiplier and a timespan rather than a timeframe string.
+    """
+
+    following_parquet: str = str(_DATA_DIR / "following.parquet")
+    main_parquet: str = str(_DATA_DIR / "main.parquet")
+    futures_parquet: str = str(_DATA_DIR / "futures.parquet")
+    treasury_parquet: str = str(_DATA_DIR / "treasury.parquet")
+    agg_multiplier: int = 1
+    agg_timespan: str = "minute"
+    start_lookback_days: int = 365 * 2 + 1
+
+    def __post_init__(self) -> None:
+        if self.agg_multiplier <= 0:
+            raise ConfigError("DATA.static.agg_multiplier must be > 0")
+        if self.start_lookback_days <= 0:
+            raise ConfigError("DATA.static.start_lookback_days must be > 0")
+        if not self.agg_timespan.strip():
+            raise ConfigError("DATA.static.agg_timespan must not be empty")
+
+
+# "iex" is what a free account gets; "sip" is the full tape. Option feeds carry no bars.
 ALPACA_STOCK_FEEDS = ("iex", "sip", "delayed_sip")
 ALPACA_OPTION_FEEDS = ("indicative", "opra")
 
@@ -51,9 +80,8 @@ class AlpacaConfig:
     """
     Credentials and endpoints for Alpaca.
 
-    ``endpoint`` is the trading REST base — paper by default, because the live one places real
-    orders and the two differ only by a hostname. ``feed`` picks both the data quality and the
-    market: the stock feeds stream equities, the option feeds stream contracts.
+    ``endpoint`` is the trading REST base, paper by default: the live one places real orders and
+    the two differ only by a hostname. ``feed`` picks the data quality and the market.
     """
 
     api_key: str
@@ -109,6 +137,7 @@ class DataConfig:
     polygon: PolygonConfig | None = None
     live_ibkr: LiveIBKRConfig | None = None
     alpaca: AlpacaConfig | None = None
+    static: StaticDataConfig = field(default_factory=StaticDataConfig)
     events: tuple[str, ...] = ("bars",)
 
 @dataclass(frozen=True, slots=True)
@@ -249,9 +278,7 @@ def _secret(raw: dict, field: str, variable: str, where: str) -> str:
     """
     A credential, from the environment and nowhere else.
 
-    Config files get committed; ``.env`` does not. One found in the config is refused rather than
-    ignored, because ignoring it would leave the key sitting in the file it should never have
-    been written to.
+    One found in the config is refused rather than ignored, which would leave it in the file.
     """
     if raw.get(field) is not None:
         raise ConfigError(
@@ -264,6 +291,23 @@ def _secret(raw: dict, field: str, variable: str, where: str) -> str:
             f"{variable} is required in the environment for {where}. See .env.example."
         )
     return value
+
+
+def _parse_static_config(raw: Any) -> StaticDataConfig:
+    """The dataset locations and downloader settings, all optional with working defaults."""
+    static_raw = _assert_map(raw, "DATA.static")
+    defaults = StaticDataConfig()
+    return StaticDataConfig(
+        following_parquet=str(static_raw.get("following_parquet", defaults.following_parquet)),
+        main_parquet=str(static_raw.get("main_parquet", defaults.main_parquet)),
+        futures_parquet=str(static_raw.get("futures_parquet", defaults.futures_parquet)),
+        treasury_parquet=str(static_raw.get("treasury_parquet", defaults.treasury_parquet)),
+        agg_multiplier=int(static_raw.get("agg_multiplier", defaults.agg_multiplier)),
+        agg_timespan=str(static_raw.get("agg_timespan", defaults.agg_timespan)).strip(),
+        start_lookback_days=int(
+            static_raw.get("start_lookback_days", defaults.start_lookback_days)
+        ),
+    )
 
 
 def _parse_alpaca_config(raw: Any) -> AlpacaConfig:
@@ -335,14 +379,12 @@ def load_config(file_path: str | Path) -> Config:
     """
     Loads and parses user's config file.
 
-    A ``.env`` is read first so credentials can live there instead of in the config: the one
-    beside the config file if there is one, else the nearest above the working directory. It
-    never overrides a variable already set, so a real environment still wins.
+    Reads a ``.env`` first — beside the config if there is one, else the nearest above the working
+    directory — without overriding anything already set.
     """
     file_path: Path = Path(file_path).resolve()
     beside = file_path.parent / ".env"
-    # find_dotenv searches from this module by default, which inside an installed package is
-    # nowhere near the user's project.
+    # find_dotenv searches from this module by default, which is inside the installed package.
     load_dotenv(beside if beside.is_file() else find_dotenv(usecwd=True))
 
     # Open the config file
@@ -422,6 +464,7 @@ def load_config(file_path: str | Path) -> Config:
             polygon=polygon_cfg,
             live_ibkr=live_ibkr_cfg,
             alpaca=alpaca_cfg,
+            static=_parse_static_config(data_raw.get("static", {}) or {}),
             events=_parse_event_kinds(data_raw.get("events")),
         )
 

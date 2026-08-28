@@ -10,6 +10,7 @@ from ..util.config import Config, ConfigError, ALLOWED_TFS, DataSrcType
 from ..data_layer.datasource_base import DataSource
 from .dataframe_datasource import DataFrameDataSource
 
+from . import staticUpdater
 from .staticUpdater import update_main_from_following
 
 # I must confess, this class is nasty and 1/3 alcohol, 1/3 GPT, and 1/3 late night coding
@@ -29,6 +30,8 @@ class ParquetPolygonDataSource(DataSource):
 
     async def __aiter__(self) -> AsyncIterable[Bar]:
         if self._config.system.fresh_data:
+            # The downloader is a module of constants, so point it at this run's config first.
+            staticUpdater.configure(self._config.data.static)
             update_main_from_following()
 
         # ----- get minimal cols ----- #

@@ -49,33 +49,37 @@ import requests
 from dotenv import load_dotenv
 load_dotenv()
 
+from ..util.config import StaticDataConfig
+
 # ---------------------------
 # Configuration
 # ---------------------------
 API_BASE = "https://api.polygon.io"
 API_KEY = os.environ.get("POLYGON_API_KEY", "")
 
-# File paths (can be overridden via env)
+# Paths and aggregation come from DATA.static.
 HERE = Path(__file__).resolve().parent
 DATA_DIR = HERE / "data"
 
-FOLLOWING_PARQUET = os.environ.get(
-    "FOLLOWING_PARQUET",
-    str(DATA_DIR / "following.parquet")
-)
+SETTINGS = StaticDataConfig()
+FOLLOWING_PARQUET = SETTINGS.following_parquet
+MAIN_PARQUET = SETTINGS.main_parquet
+# One-minute bars are the canonical resolution; 5m and 15m are derived from these.
+AGG_MULTIPLIER = SETTINGS.agg_multiplier
+AGG_TIMESPAN = SETTINGS.agg_timespan
+START_LOOKBACK_DAYS = SETTINGS.start_lookback_days
 
-MAIN_PARQUET = os.environ.get(
-    "MAIN_PARQUET",
-    str(DATA_DIR / "main.parquet")
-)
 
-# Aggregates configuration
-AGG_MULTIPLIER = int(os.environ.get("AGG_MULTIPLIER", "1"))
-# We’ll use 1-minute bars as the canonical resolution and derive 5m/15m from these.
-AGG_TIMESPAN = os.environ.get("AGG_TIMESPAN", "minute")
-
-# Lookback window for *new* tickers (days)
-START_LOOKBACK_DAYS = int(os.environ.get("START_LOOKBACK_DAYS", str(365 * 2 + 1)))
+def configure(settings: StaticDataConfig) -> None:
+    """Point this module at a configured dataset instead of the defaults."""
+    global SETTINGS, FOLLOWING_PARQUET, MAIN_PARQUET
+    global AGG_MULTIPLIER, AGG_TIMESPAN, START_LOOKBACK_DAYS
+    SETTINGS = settings
+    FOLLOWING_PARQUET = settings.following_parquet
+    MAIN_PARQUET = settings.main_parquet
+    AGG_MULTIPLIER = settings.agg_multiplier
+    AGG_TIMESPAN = settings.agg_timespan
+    START_LOOKBACK_DAYS = settings.start_lookback_days
 
 # Rate limiting / retry
 MAX_RETRIES = 5

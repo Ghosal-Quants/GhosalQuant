@@ -24,21 +24,27 @@ from typing import List
 
 import pandas as pd
 
+from ..util.config import StaticDataConfig
+
 # ---------------------------
 # Defaults & Paths
 # ---------------------------
-FOLLOWING_PARQUET = os.path.join(
-    "data", "following.parquet"
-) if "FOLLOWING_PARQUET" not in os.environ else os.environ["FOLLOWING_PARQUET"]
-MAIN_PARQUET = os.path.join(
-    "data", "main.parquet"
-) if "MAIN_PARQUET" not in os.environ else os.environ["MAIN_PARQUET"]
-FUTURES_PARQUET = os.path.join(
-    "data", "futures.parquet"
-) if "FUTURES_PARQUET" not in os.environ else os.environ["FUTURES_PARQUET"]
-TREASURY_PARQUET = os.path.join(
-    "data", "treasury.parquet"
-) if "TREASURY_PARQUET" not in os.environ else os.environ["TREASURY_PARQUET"]
+# Paths come from DATA.static; the defaults sit beside the code, not the working directory.
+SETTINGS = StaticDataConfig()
+FOLLOWING_PARQUET = SETTINGS.following_parquet
+MAIN_PARQUET = SETTINGS.main_parquet
+FUTURES_PARQUET = SETTINGS.futures_parquet
+TREASURY_PARQUET = SETTINGS.treasury_parquet
+
+
+def configure(settings: StaticDataConfig) -> None:
+    """Point this module at a configured dataset instead of the defaults."""
+    global SETTINGS, FOLLOWING_PARQUET, MAIN_PARQUET, FUTURES_PARQUET, TREASURY_PARQUET
+    SETTINGS = settings
+    FOLLOWING_PARQUET = settings.following_parquet
+    MAIN_PARQUET = settings.main_parquet
+    FUTURES_PARQUET = settings.futures_parquet
+    TREASURY_PARQUET = settings.treasury_parquet
 
 SUPPORTED_TYPES = {"stocks", "options", "futures", "treasury"}
 

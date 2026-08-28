@@ -830,6 +830,12 @@ comparing against `open_order_views` and the account's executions, and getting i
 `IBKRBroker` from a `BrokerConfig` dataclass.
 
 ## 10 Configuration
+`DATA.static` holds where the downloaded parquet datasets live and what the Polygon downloader asks for
+(`agg_multiplier`, `agg_timespan`, `start_lookback_days`). These were read straight from `os.environ` by
+`listEditor` and `staticUpdater`, which put settings in `.env` beside the secrets; they come from the config now,
+and `configure(settings)` points those modules at a loaded one. Their defaults sit beside the code rather than
+under the working directory, so where a run starts from no longer decides which file gets written.
+
 Credentials come from the environment and nowhere else. `load_config` loads a `.env` first (the one beside the
 config, else the nearest above the working directory) without overriding anything already set, so a real environment
 still wins. `POLYGON_API_KEY`, `ALPACA_API_KEY` and `ALPACA_API_SECRET` are the variables; `.env.example` lists

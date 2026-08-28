@@ -229,7 +229,6 @@ def test_alpaca_credentials_can_come_from_the_environment(monkeypatch):
     config = _load(_alpaca_yaml("  alpaca: {}"))
 
     assert (config.data.alpaca.api_key, config.data.alpaca.api_secret) == ("PKENV", "envsecret")
-    # Nothing said otherwise, so it points at paper rather than at real money.
     assert config.data.alpaca.is_paper is True
     assert config.data.alpaca.feed == "iex"
 
@@ -353,3 +352,88 @@ def test_the_template_lists_the_credentials_and_nothing_else():
         f"missing from .env.example: {sorted(required - documented)}; "
         f"not a credential: {sorted(documented - required)}"
     )
+
+
+# ----- The static dataset settings ----- #
+
+_STATIC_YAML = """
+SYSTEM:
+  symbols: ["AAPL"]
+  main_timeframe: "1Min"
+  execution_timeframe: "1Min"
+  fresh_candles: false
+  use_risk_manager: false
+DATA:
+  source: "yfinance"
+  yfinance: {}
+%s
+TIME_RANGE:
+  start_date: "2024-01-01"
+  end_date: "2024-01-31"
+  session_start_time: "09:00"
+  session_end_time: "17:00"
+RISK:
+  rules: []
+"""
+
+
+def test_the_static_settings_default_without_a_block():
+    """They are settings with working defaults, so a config that says nothing still runs."""
+    static = _load(_STATIC_YAML % "").data.static
+
+    assert static.agg_multiplier == 1
+    assert static.agg_timespan == "minute"
+    assert static.start_lookback_days == 731
+    assert static.main_parquet.endswith("main.parquet")
+    # Beside the code, not the working directory.
+    assert Path(static.main_parquet).is_absolute()
+
+
+def test_the_static_block_overrides_what_it_names():
+    static = _load(_STATIC_YAML % """  static:
+    main_parquet: "/data/mine.parquet"
+    agg_multiplier: 5
+    agg_timespan: "hour"
+    start_lookback_days: 30""").data.static
+
+    assert static.main_parquet == "/data/mine.parquet"
+    assert (static.agg_multiplier, static.agg_timespan) == (5, "hour")
+    assert static.start_lookback_days == 30
+    assert static.futures_parquet.endswith("futures.parquet")
+
+
+def test_nonsense_static_settings_are_refused():
+    for block, message in (
+        ('  static:\n    agg_multiplier: 0', "agg_multiplier"),
+        ('  static:\n    start_lookback_days: -5', "start_lookback_days"),
+        ('  static:\n    agg_timespan: "  "', "agg_timespan"),
+    ):
+        with pytest.raises(ConfigError, match=message):
+            _load(_STATIC_YAML % block)
+
+
+def test_the_scripts_read_the_config_rather_than_the_environment(monkeypatch):
+    """
+    These used to be read straight from os.environ, which put settings in .env alongside secrets.
+
+    They come from DATA.static now, and the two scripts agree on where the data lives — before,
+    one defaulted beside the code and the other relative to the working directory.
+    """
+    from ghosalquant.data_layer import listEditor, staticUpdater
+    from ghosalquant.util.config import StaticDataConfig
+
+    assert listEditor.MAIN_PARQUET == staticUpdater.MAIN_PARQUET
+
+    monkeypatch.setenv("MAIN_PARQUET", "/from/the/environment.parquet")
+    assert listEditor.MAIN_PARQUET != "/from/the/environment.parquet"
+
+    settings = StaticDataConfig(main_parquet="/configured/main.parquet", agg_multiplier=15)
+    try:
+        listEditor.configure(settings)
+        staticUpdater.configure(settings)
+        assert listEditor.MAIN_PARQUET == "/configured/main.parquet"
+        assert staticUpdater.MAIN_PARQUET == "/configured/main.parquet"
+        assert staticUpdater.AGG_MULTIPLIER == 15
+    finally:
+        listEditor.configure(StaticDataConfig())
+        staticUpdater.configure(StaticDataConfig())

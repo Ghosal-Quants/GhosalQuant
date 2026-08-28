@@ -31,6 +31,17 @@ DATA:
     parquet_path: "src/ghosalquant/data_layer/data/main.parquet"
     base_resolution: "1Min"
   yfinance: {} # Currently no config options for yfinance, but this section may be expanded in future
+  # Where the downloaded parquet datasets live, and what the Polygon downloader asks for. All
+  # optional; the defaults sit beside the code, so where you run from does not decide which file
+  # gets written.
+  # static:
+  #   following_parquet: "src/ghosalquant/data_layer/data/following.parquet"
+  #   main_parquet: "src/ghosalquant/data_layer/data/main.parquet"
+  #   futures_parquet: "src/ghosalquant/data_layer/data/futures.parquet"
+  #   treasury_parquet: "src/ghosalquant/data_layer/data/treasury.parquet"
+  #   agg_multiplier: 1          # one-minute bars are canonical; coarser ones derive from them
+  #   agg_timespan: "minute"
+  #   start_lookback_days: 731   # how far back a newly followed ticker is fetched
   # To switch to Alpaca live market data, change `source` to `live_alpaca` and use the block
   # below. Needs the optional SDK: pip install "ghosalquant[alpaca]"
   # alpaca:
