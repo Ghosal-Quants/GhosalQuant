@@ -65,9 +65,10 @@ class LegacyBacktester:
         pass
 
 
-    def run_backtest(self):
+    def run_backtest(self, export: bool = True):
         """
-        Run the backtests
+        Run the backtests. ``export`` writes the spreadsheets; callers that only want the numbers
+        (tests included) turn it off rather than leaving files behind.
         """
 
         # Create two empty lists: one for currently active trades, one for finished trades
@@ -183,8 +184,9 @@ class LegacyBacktester:
         calculate_stats(self.df_results)
 
         # Save the final results table to an Excel file.
-        output_to_excel(self.df_results)
-        self.output_to_excel()
+        if export:
+            output_to_excel(self.df_results)
+            self.output_to_excel()
 
 
     def output_to_excel(self):
@@ -200,7 +202,7 @@ class LegacyBacktester:
         fn = f"trades_{timestamp}.xlsx"
         fp = out_dir / fn
 
-        if self.df_results is not None:
+        if self.df_results is not None and not self.df_results.empty:
             self.df_results.to_excel(fp, index=False)
             print(f"Saved trades to {fp}")
         else:

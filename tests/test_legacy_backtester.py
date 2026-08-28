@@ -34,11 +34,9 @@ def test_legacy_apply_strategy():
     test_df = create_test_dataframe()
 
     # instantiate Backtester object - mimic the run() function
-    backtest_obj = LegacyBacktester(test_df, example_strategy)
+    backtest_obj = LegacyBacktester(test_df, test_df, example_strategy)
 
-    # Should leave backtester.df with an extra buy/sell col
-    # Can assume this works by the above test....
-    backtest_obj.prepare_data()
+    # __init__ has already prepared the data and applied the strategy.
 
     # Assert the buy and sells exist in the updated df
 
@@ -51,19 +49,16 @@ def test_legacy_apply_strategy():
     # Index 5: 102.50 > 102.00 -> +1 (Buy)
     # Index 6: 102.80 > 102.50 -> +1 (Buy)
 
-    # Apply strategy
-    backtest_obj.apply_strategy()
-
     # Print the df
     # print(f"{backtest_obj.df=}")
 
     # Check if the 'SIGNAL' column was created
-    assert 'SIGNAL' in backtest_obj.df.columns
+    assert 'SIGNAL' in backtest_obj.df_hour_data.columns
 
     expected_signals = pd.Series([0, 1, -1, 1, 1, 1, 1], name='SIGNAL')
     # Check if the generated 'SIGNAL' column matches the expected Series
     # Use numpy.testing.assert_array_equal for robust pandas Series comparison
-    pd.testing.assert_series_equal(backtest_obj.df['SIGNAL'], expected_signals)
+    pd.testing.assert_series_equal(backtest_obj.df_hour_data['SIGNAL'], expected_signals)
     
 
 def test_run_backtest():
@@ -91,8 +86,11 @@ def test_run_backtest():
     # Index 5: 102.50 > 102.00 -> +1 (Buy)
     # Index 6: 102.80 > 102.50 -> +1 (Buy)
 
-    # Run the backtest
-    backtest_obj.run_backtest()
+    # No export: a test has no business writing spreadsheets.
+    backtest_obj.run_backtest(export=False)
+
+    assert backtest_obj.df_results.empty, "this data closes no trades"
+    assert backtest_obj.df_equity.empty is False
 
     # check for the df_results
     # backtest_obj.df_results
