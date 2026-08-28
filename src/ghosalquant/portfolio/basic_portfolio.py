@@ -5,6 +5,8 @@ from ..core.contracts import ContractRegistry
 from ..core.types import Trade, EquityPoint, Fill, SignalType, Bar
 from ..portfolio.portfolio_base import Portfolio
 
+_EPS = 1e-12
+
 
 class BasicPortfolio(Portfolio):
     """
@@ -54,15 +56,15 @@ class BasicPortfolio(Portfolio):
             raise RuntimeError("adopt() must be called before any fills are processed")
         self._cash = float(cash)
         for symbol, (quantity, entry_price) in (positions or {}).items():
-            if quantity <= 0.0:
+            if abs(quantity) <= _EPS:
                 continue
             self._record_open_trade(
                 Trade(
                     id=self._take_trade_id(),
                     symbol=str(symbol),
-                    signal_type=SignalType.BUY,
+                    signal_type=SignalType.BUY if quantity > 0.0 else SignalType.SELL,
                     entry_price=float(entry_price),
-                    size=float(quantity),
+                    size=abs(float(quantity)),
                     open_time=time_stamp or datetime.now(),
                 )
             )
@@ -87,12 +89,9 @@ class BasicPortfolio(Portfolio):
         # A new lot must be marked from the fill that created it, not from a
         # stale price cached before the execution.
         self._last_prices[fill.symbol] = float(fill.price)
-        if fill.side == SignalType.BUY:
-            self._open(fill)
-        elif fill.side == SignalType.SELL:
-            self._close(fill)
-        else:
+        if fill.side not in (SignalType.BUY, SignalType.SELL):
             raise ValueError(f"Unsupported fill side: {fill.side}")
+        self._apply(fill)
 
         quantity_after = self.open_qty_by_symbol.get(fill.symbol, 0.0)
         if (
@@ -117,7 +116,7 @@ class BasicPortfolio(Portfolio):
 
     def average_entry_price(self, symbol: str) -> float | None:
         quantity = self._open_qty_by_symbol.get(symbol, 0.0)
-        if quantity <= 0.0:
+        if abs(quantity) <= _EPS:
             return None
         # Cost is money and quantity is contracts, so the multiplier divides back out.
         return self._open_cost_by_symbol.get(symbol, 0.0) / (quantity * self._multiplier(symbol))
@@ -224,29 +223,113 @@ class BasicPortfolio(Portfolio):
 
     # Helpers -------
 
-    def _open(self, fill: Fill) -> None:
-        commission: float = fill.commission or 0.0
-        notional: float = fill.price * fill.quantity * self._multiplier(fill.symbol)
-        total_cost: float = notional + commission
+    def _apply(self, fill: Fill) -> None:
+        """
+        Net a fill against the position: opening, reducing, or reversing through flat.
 
-        if total_cost > self._cash:
+        A sell with nothing to sell opens a short rather than doing nothing, which is how selling
+        premium works. Margin is not modelled here — what may be shorted is a risk rule's business.
+        """
+        wanted = float(fill.quantity)
+        if wanted <= _EPS:
+            return
+        position = self._open_qty_by_symbol.get(fill.symbol, 0.0)
+        signed = wanted if fill.side is SignalType.BUY else -wanted
+        commission = fill.commission or 0.0
+
+        if abs(position) <= _EPS or (position > 0.0) == (signed > 0.0):
+            self._open(fill, wanted, commission)
             return
 
-        self._cash -= total_cost
+        reducing = min(wanted, abs(position))
+        closed = self._close(fill, reducing, commission * reducing / wanted)
+        leftover = wanted - closed
+        if leftover > _EPS:
+            self._open(fill, leftover, commission * leftover / wanted)
+
+    def _open(self, fill: Fill, quantity: float, commission: float) -> None:
+        long_side = fill.side is SignalType.BUY
+        notional: float = fill.price * quantity * self._multiplier(fill.symbol)
+
+        if long_side and notional + commission > self._cash:
+            return
+
+        self._cash += (-notional if long_side else notional) - commission
         self._fees_paid += commission
         self._realised_pnl -= commission
 
-        trade_id: int = self._take_trade_id()
-
-        trade = Trade(
-            id=trade_id,
-            symbol=fill.symbol,
-            signal_type=SignalType.BUY,
-            entry_price=fill.price,
-            size=fill.quantity,
-            open_time=fill.time_stamp,
+        self._record_open_trade(
+            Trade(
+                id=self._take_trade_id(),
+                symbol=fill.symbol,
+                signal_type=SignalType.BUY if long_side else SignalType.SELL,
+                entry_price=fill.price,
+                size=quantity,
+                open_time=fill.time_stamp,
+            ),
+            notional=notional if long_side else -notional,
         )
-        self._record_open_trade(trade, notional=notional)
+
+    def _close(self, fill: Fill, quantity: float, commission: float) -> float:
+        """Close against existing lots, newest first, returning how much was closed."""
+        symbol: str = fill.symbol
+        trades: dict | None = self._open_trades.get(symbol)
+        if not trades or quantity <= _EPS:
+            return 0.0
+
+        multiplier: float = self._multiplier(symbol)
+        close_price: float = fill.price
+        remaining: float = quantity
+
+        for trade_id in sorted(trades.keys(), reverse=True):  # LIFO
+            if remaining <= _EPS:
+                break
+
+            trade = trades[trade_id]
+            qty_to_close: float = min(trade.size, remaining)
+            long_lot: bool = trade.signal_type is SignalType.BUY
+            notional: float = qty_to_close * close_price * multiplier
+            basis: float = qty_to_close * trade.entry_price * multiplier
+            leg_commission: float = commission * (qty_to_close / quantity)
+
+            self._open_qty_by_symbol[symbol] = self._open_qty_by_symbol.get(symbol, 0.0) + (
+                -qty_to_close if long_lot else qty_to_close
+            )
+            self._open_cost_by_symbol[symbol] = self._open_cost_by_symbol.get(symbol, 0.0) + (
+                -basis if long_lot else basis
+            )
+
+            self._cash += (notional if long_lot else -notional) - leg_commission
+            realised = (notional - basis if long_lot else basis - notional) - leg_commission
+            self._realised_pnl += realised
+            self._fees_paid += leg_commission
+
+            if trade.size - qty_to_close <= _EPS:
+                trade.close_time = fill.time_stamp
+                trade.realised_pnl = trade.unrealised_pnl(close_price) * multiplier - leg_commission
+                self._closed_trades.append(trade)
+                del trades[trade_id]
+            else:
+                closed_trade = Trade(
+                    id=self._take_trade_id(),
+                    symbol=trade.symbol,
+                    signal_type=trade.signal_type,
+                    entry_price=trade.entry_price,
+                    size=qty_to_close,
+                    open_time=trade.open_time,
+                    close_time=fill.time_stamp,
+                )
+                closed_trade.realised_pnl = realised
+                self._closed_trades.append(closed_trade)
+                trade.size -= qty_to_close
+
+            remaining -= qty_to_close
+
+        if not trades:
+            self._open_trades.pop(symbol, None)
+            self._open_qty_by_symbol.pop(symbol, None)
+            self._open_cost_by_symbol.pop(symbol, None)
+        return quantity - remaining
 
     def _take_trade_id(self) -> int:
         trade_id = self._next_trade_id
@@ -257,86 +340,18 @@ class BasicPortfolio(Portfolio):
         return self._contracts.get(symbol).multiplier
 
     def _record_open_trade(self, trade: Trade, *, notional: float | None = None) -> None:
+        long_side = trade.signal_type is SignalType.BUY
+        size = float(trade.size) if long_side else -float(trade.size)
         cost = (
-            trade.entry_price * trade.size * self._multiplier(trade.symbol)
+            trade.entry_price * size * self._multiplier(trade.symbol)
             if notional is None
             else notional
         )
         self._open_trades.setdefault(trade.symbol, {})[trade.id] = trade
         self._open_qty_by_symbol[trade.symbol] = (
-            self._open_qty_by_symbol.get(trade.symbol, 0.0) + float(trade.size)
+            self._open_qty_by_symbol.get(trade.symbol, 0.0) + size
         )
         self._open_cost_by_symbol[trade.symbol] = (
             self._open_cost_by_symbol.get(trade.symbol, 0.0) + cost
         )
 
-    def _close(self, fill: Fill) -> None:
-        symbol: str = fill.symbol
-        trades: dict | None = self._open_trades.get(symbol)
-        if not trades:
-            return
-
-        close_qty: float = fill.quantity
-        close_price: float = fill.price
-        commission: float = fill.commission or 0.0
-        multiplier: float = self._multiplier(symbol)
-
-        trade_ids_in_order = sorted(trades.keys(), reverse=True)  # LIFO
-
-        for trade_id in trade_ids_in_order:  # Close multiple trades if needed, in order to satisfy quantity
-            if close_qty <= 0:
-                break
-
-            trade = trades[trade_id]
-
-            # Amount we are closing form this trade
-            qty_to_close: float = min(trade.size, close_qty)
-            self._open_qty_by_symbol[symbol] = max(
-                0.0,
-                self._open_qty_by_symbol.get(symbol, 0.0)
-                - qty_to_close,
-            )
-            self._open_cost_by_symbol[symbol] = max(
-                0.0,
-                self._open_cost_by_symbol.get(symbol, 0.0)
-                - trade.entry_price * qty_to_close * multiplier,
-            )
-
-            leg_commission = commission * (qty_to_close / fill.quantity)
-
-            notional = qty_to_close * close_price * multiplier
-            realised = (close_price - trade.entry_price) * qty_to_close * multiplier - leg_commission
-            self._realised_pnl += realised
-            self._cash += notional - leg_commission
-            self._fees_paid += leg_commission
-
-            if trade.size <= close_qty:
-                trade.close_time = fill.time_stamp
-                trade.realised_pnl = trade.unrealised_pnl(close_price) * multiplier - leg_commission
-                self._closed_trades.append(trade)
-                close_qty -= trade.size
-                del trades[trade_id]
-            else:
-                new_trade_id: int = self._next_trade_id
-                self._next_trade_id += 1
-
-                closed_trade = Trade(
-                    id=new_trade_id,
-                    symbol=trade.symbol,
-                    signal_type=SignalType.SELL,
-                    entry_price=trade.entry_price,
-                    size=qty_to_close,
-                    open_time=trade.open_time,
-                    close_time=fill.time_stamp,
-                )
-                closed_trade.realised_pnl = (
-                    (close_price - trade.entry_price) * qty_to_close * multiplier - leg_commission
-                )
-                self._closed_trades.append(closed_trade)
-
-                trade.size -= qty_to_close
-                close_qty -= qty_to_close
-
-        if not trades:
-            self._open_qty_by_symbol.pop(symbol, None)
-            self._open_cost_by_symbol.pop(symbol, None)

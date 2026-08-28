@@ -1,5 +1,5 @@
 import asyncio
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import pytest
 
@@ -265,3 +265,115 @@ def test_cash_allocation_measures_resting_contracts_at_their_real_reservation():
     assert rule.apply(order, context) is True
     # 2% of 100,000 is 2,000, of which one resting contract pair already holds 1,000.
     assert order.quantity == pytest.approx(2.0)
+
+
+# ----- Selling what you do not hold ----- #
+
+_SHORT_T0 = datetime(2026, 10, 1, 14, 30)
+
+
+def _short_fill(side: SignalType, quantity: float, price: float, symbol: str = "AAPL") -> Fill:
+    return Fill(
+        time_stamp=_SHORT_T0, symbol=symbol, side=side, quantity=quantity, price=price
+    )
+
+
+def test_selling_with_nothing_held_opens_a_short_and_receives_the_premium():
+    portfolio = BasicPortfolio(init_capital=10_000.0)
+
+    asyncio.run(portfolio.process_fill(_short_fill(SignalType.SELL, 10.0, 50.0)))
+
+    assert portfolio.cash_balance == pytest.approx(10_500.0)
+    assert portfolio.open_qty_by_symbol["AAPL"] == pytest.approx(-10.0)
+    assert portfolio.average_entry_price("AAPL") == pytest.approx(50.0)
+
+
+def test_a_short_gains_when_the_price_falls_and_loses_when_it_rises():
+    portfolio = BasicPortfolio(init_capital=10_000.0)
+    asyncio.run(portfolio.process_fill(_short_fill(SignalType.SELL, 10.0, 50.0)))
+
+    portfolio.snapshot_equity(time_stamp=_SHORT_T0, prices={"AAPL": 60.0})
+    assert portfolio.unrealised_pnl == pytest.approx(-100.0)
+    assert portfolio.current_equity == pytest.approx(9_900.0)
+
+    portfolio.snapshot_equity(time_stamp=_SHORT_T0 + timedelta(seconds=1), prices={"AAPL": 45.0})
+    assert portfolio.unrealised_pnl == pytest.approx(50.0)
+
+
+def test_buying_a_short_back_realises_the_difference():
+    portfolio = BasicPortfolio(init_capital=10_000.0)
+    asyncio.run(portfolio.process_fill(_short_fill(SignalType.SELL, 10.0, 50.0)))
+    asyncio.run(portfolio.process_fill(_short_fill(SignalType.BUY, 10.0, 45.0)))
+
+    assert portfolio.realised_pnl == pytest.approx(50.0)
+    assert portfolio.cash_balance == pytest.approx(10_050.0)
+    assert portfolio.open_qty_by_symbol.get("AAPL", 0.0) == 0.0
+
+
+def test_a_fill_larger_than_the_position_reverses_it_through_flat():
+    portfolio = BasicPortfolio(init_capital=10_000.0)
+    asyncio.run(portfolio.process_fill(_short_fill(SignalType.BUY, 2.0, 100.0)))
+    asyncio.run(portfolio.process_fill(_short_fill(SignalType.SELL, 3.0, 110.0)))
+
+    # Two closed at a profit, and the third opens a short rather than being dropped.
+    assert portfolio.realised_pnl == pytest.approx(20.0)
+    assert portfolio.open_qty_by_symbol["AAPL"] == pytest.approx(-1.0)
+    assert portfolio.average_entry_price("AAPL") == pytest.approx(110.0)
+
+
+def test_a_short_option_is_worth_its_multiplier():
+    portfolio = BasicPortfolio(init_capital=10_000.0, contracts=_REGISTRY)
+
+    asyncio.run(portfolio.process_fill(_short_fill(SignalType.SELL, 1.0, 5.00, symbol=OCC)))
+    assert portfolio.cash_balance == pytest.approx(10_500.0)
+
+    portfolio.snapshot_equity(time_stamp=_SHORT_T0, prices={OCC: 6.00})
+    assert portfolio.unrealised_pnl == pytest.approx(-100.0)
+
+    asyncio.run(portfolio.process_fill(_short_fill(SignalType.BUY, 1.0, 6.00, symbol=OCC)))
+    assert portfolio.realised_pnl == pytest.approx(-100.0)
+    assert portfolio.cash_balance == pytest.approx(9_900.0)
+
+
+def test_commission_is_charged_on_both_legs_of_a_short():
+    portfolio = BasicPortfolio(init_capital=10_000.0)
+    open_fill = Fill(
+        time_stamp=_SHORT_T0, symbol="AAPL", side=SignalType.SELL, quantity=10.0,
+        price=50.0, commission=1.0,
+    )
+    close_fill = Fill(
+        time_stamp=_SHORT_T0, symbol="AAPL", side=SignalType.BUY, quantity=10.0,
+        price=50.0, commission=1.0,
+    )
+
+    asyncio.run(portfolio.process_fill(open_fill))
+    asyncio.run(portfolio.process_fill(close_fill))
+
+    assert portfolio.fees_paid == pytest.approx(2.0)
+    assert portfolio.realised_pnl == pytest.approx(-2.0)
+    assert portfolio.cash_balance == pytest.approx(9_998.0)
+
+
+def test_a_long_still_behaves_exactly_as_before():
+    portfolio = BasicPortfolio(init_capital=10_000.0)
+    asyncio.run(portfolio.process_fill(_short_fill(SignalType.BUY, 10.0, 50.0)))
+
+    assert portfolio.cash_balance == pytest.approx(9_500.0)
+    assert portfolio.open_qty_by_symbol["AAPL"] == pytest.approx(10.0)
+
+    asyncio.run(portfolio.process_fill(_short_fill(SignalType.SELL, 10.0, 55.0)))
+    assert portfolio.realised_pnl == pytest.approx(50.0)
+    assert portfolio.cash_balance == pytest.approx(10_050.0)
+
+
+def test_a_fill_for_nothing_does_nothing():
+    """Netting divides the commission across the quantity, so an empty fill has to stop first."""
+    portfolio = BasicPortfolio(init_capital=10_000.0)
+    asyncio.run(portfolio.process_fill(_short_fill(SignalType.BUY, 10.0, 100.0)))
+
+    empty = _short_fill(SignalType.SELL, 0.0, 100.0)
+    empty.commission = 1.0
+    asyncio.run(portfolio.process_fill(empty))
+
+    assert portfolio.open_qty_by_symbol == {"AAPL": 10.0}
+    assert portfolio.cash_balance == pytest.approx(9_000.0)

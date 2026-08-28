@@ -615,6 +615,10 @@ The default implementation (`ghosalquant.portfolio.basic_portfolio`). Key behavi
   on `SELL` fills using LIFO order. Supports partial closes. A fill carrying an `execution_id` is applied once and
   only once — a venue can report the same execution twice, and applying it again invents a position the account
   never held. Fills without one (a simulated broker has none) are applied as before.
+- **Positions are signed.** A fill nets against what is held: it opens, reduces, or reverses through flat, so a
+  sell with nothing to sell opens a short rather than doing nothing. That is how selling premium works, and it is
+  what `open_qty_by_symbol` being negative means. Margin is not modelled — what may be shorted is a risk rule's
+  business, not the portfolio's.
 - **`adopt(cash, positions)`**: Start from what the account actually holds instead of from `init_capital`. A live
   session inherits cash and positions this process did not create, and every capital-aware risk rule sizes from
   equity, so starting flat means sizing against a number nobody chose. Must be called before any fills.
