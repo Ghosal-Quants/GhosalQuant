@@ -7,6 +7,7 @@ from ..execution.strategy_base import Strategy
 from ..execution.execution_system import ExecutionSystem
 from ..data_layer.datasource_base import DataSource
 from ..execution.sinks import SignalSink
+from ..core.contracts import ContractRegistry
 from ..core.types import Order, BacktestKPMs, EquityPoint
 from ..portfolio.basic_portfolio import BasicPortfolio
 from ..portfolio.portfolio_base import Portfolio
@@ -27,12 +28,13 @@ class Backtester:
             portfolio: Portfolio | None = None,
             risk_manager: RiskManager | None = None,
             broker: Broker | None = None,
-            config: Config | None = None
+            config: Config | None = None,
+            contracts: ContractRegistry | None = None,
     ) -> None:
         self.config = config
 
         if portfolio is None:
-            portfolio = BasicPortfolio(init_capital=10_000.0)
+            portfolio = BasicPortfolio(init_capital=10_000.0, contracts=contracts)
 
         if risk_manager is None and config is not None and config.system.use_risk_manager:
             risk_manager = build_risk_manager(config.risk)
@@ -43,7 +45,8 @@ class Backtester:
             signal_destination = signal_destination,
             risk_manager = risk_manager,
             portfolio = portfolio,
-            broker = broker
+            broker = broker,
+            contracts = contracts,
         )
 
         self._portfolio = self.execution_system.portfolio
@@ -59,13 +62,14 @@ class Backtester:
                     portfolio: Portfolio | None = None,
                     risk_manager: RiskManager | None = None,
                     init_capital: float = 10_000.0,
+                    contracts: ContractRegistry | None = None,
         ) -> "Backtester":
 
             cfg = load_config(config_path)
-            data_src = datasource_from_config(cfg)
+            data_src = datasource_from_config(cfg, contracts=contracts)
 
             if portfolio is None:
-                portfolio = BasicPortfolio(init_capital=float(init_capital))
+                portfolio = BasicPortfolio(init_capital=float(init_capital), contracts=contracts)
 
             if risk_manager is None and cfg.system.use_risk_manager:
                 risk_manager = build_risk_manager(cfg.risk)
@@ -76,8 +80,9 @@ class Backtester:
                 signal_destination=signal_destination,
                 portfolio=portfolio,
                 risk_manager=risk_manager,
-                broker=build_broker(cfg.broker),
-                config=cfg
+                broker=build_broker(cfg.broker, contracts=contracts),
+                config=cfg,
+                contracts=contracts,
             )
 
     # ----- Properties ----- #

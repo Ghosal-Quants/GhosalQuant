@@ -4,8 +4,9 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 
 import pytest
-from ib_insync import DOMLevel, TickByTickAllLast, TickAttribLast
+from ib_insync import DOMLevel, Stock, TickByTickAllLast, TickAttribLast
 
+from ghosalquant.core.contracts import Contract, ContractRegistry
 from ghosalquant.core.types import Bar, OrderBook, PublicTrade
 from ghosalquant.data_layer.datasource_factory import datasource_from_config
 from ghosalquant.data_layer.live_ibkr_datasource import LiveIBKRDataSource, book_from_ticker, trades_from_ticks
@@ -108,6 +109,29 @@ def test_ibkr_data_source_event_selection_and_depth_defaults():
         LiveIBKRDataSource(symbols=["AAPL"], events=["quotes"])
     with pytest.raises(ValueError):
         LiveIBKRDataSource(symbols=["AAPL"], depth=0)
+
+
+def test_ibkr_subscribes_to_registered_options_and_keeps_them_apart_from_the_underlier():
+    occ = "AAPL  260116C00150000"
+    registry = ContractRegistry([Contract.from_occ(occ)])
+    source = LiveIBKRDataSource(symbols=[occ, "AAPL"], contracts=registry)
+
+    option, stock = source._contracts
+    assert (option.secType, option.strike, option.right) == ("OPT", 150.0, "C")
+    assert option.lastTradeDateOrContractMonth == "20260116"
+    assert stock.secType == "STK"
+
+    # Both contracts carry ticker "AAPL", and an unqualified option has no local symbol yet, so
+    # naming them off the IBKR contract alone would emit every option event as the stock.
+    assert source.symbols == (occ, "AAPL")
+    assert source._name_of(option) == occ
+    assert source._name_of(stock) == "AAPL"
+
+
+def test_ibkr_symbols_are_unchanged_without_a_registry():
+    assert LiveIBKRDataSource(symbols=["aapl", Stock("MSFT", "SMART", "USD")]).symbols == (
+        "AAPL", "MSFT"
+    )
 
 
 # ----- Config ----- #

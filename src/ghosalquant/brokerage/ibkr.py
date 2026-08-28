@@ -6,6 +6,7 @@ import logging
 
 from ib_insync import (
     IB,
+    Option,
     Stock,
     MarketOrder,
     LimitOrder,
@@ -18,6 +19,7 @@ from ib_insync import (
 
 from .broker_base import Broker
 from ..core import metadata_keys
+from ..core.contracts import Contract as TradedContract, ContractRegistry, Right
 from ..core.types import Fill, Liquidity, OpenOrderView, Order, SignalType
 from ..state.json_store import StateCodec, VersionedJsonStateStore
 from ..util.config import BrokerMode
@@ -57,6 +59,7 @@ class IBKRBroker(Broker):
             # Default to sending stock order to SMART
             contract_overrides: Iterable[Contract] | None = None,
             state_path: str | Path | None = None,
+            contracts: ContractRegistry | None = None,
     ) -> None:
         super().__init__()
         self.ib = IB()
@@ -69,6 +72,7 @@ class IBKRBroker(Broker):
 
         # lookup for contract overrides
         self.contract_map = {c.symbol: c for c in (contract_overrides or [])}
+        self.contracts = contracts if contracts is not None else ContractRegistry()
 
         self._store = (
             None if state_path is None
@@ -109,7 +113,7 @@ class IBKRBroker(Broker):
 
         contract = self.contract_map.get(
             order.symbol,
-            Stock(order.symbol, "SMART", "USD")
+            ib_contract(self.contracts.get(order.symbol)),
         )
         action = "BUY" if order.side is SignalType.BUY else "SELL"
         limit = order.declared_limit_price
@@ -161,10 +165,12 @@ class IBKRBroker(Broker):
         positions = {}
         for position in self.ib.positions():
             quantity = float(getattr(position, "position", 0.0) or 0.0)
-            if quantity <= 0.0:
+            if quantity == 0.0:
                 continue
-            symbol = getattr(getattr(position, "contract", None), "symbol", None) or "UNKNOWN"
-            positions[symbol] = (quantity, float(getattr(position, "avgCost", 0.0) or 0.0))
+            symbol = ib_symbol(getattr(position, "contract", None))
+            # IB reports avgCost per contract, so an option's already carries its multiplier.
+            avg_cost = float(getattr(position, "avgCost", 0.0) or 0.0)
+            positions[symbol] = (quantity, avg_cost / self.contracts.get(symbol).multiplier)
         return cash, positions
 
     def get_fills(self) -> list[Fill]:
@@ -176,7 +182,7 @@ class IBKRBroker(Broker):
         """Resting orders as IB reports them, which includes any placed before this process started."""
         views = []
         for trade in self.ib.openTrades():
-            contract_symbol = getattr(trade.contract, "symbol", None) or "UNKNOWN"
+            contract_symbol = ib_symbol(trade.contract)
             if symbol is not None and contract_symbol != symbol:
                 continue
             remaining = float(trade.remaining())
@@ -196,7 +202,7 @@ class IBKRBroker(Broker):
     def cancel_open_orders(self, symbol: str, side: SignalType | None = None) -> int:
         cancelled = 0
         for trade in self.ib.openTrades():
-            if (getattr(trade.contract, "symbol", None) or "UNKNOWN") != symbol:
+            if ib_symbol(trade.contract) != symbol:
                 continue
             if side is not None and _side_of(getattr(trade.order, "action", "")) is not side:
                 continue
@@ -220,11 +226,7 @@ class IBKRBroker(Broker):
             self._seen_exec_ids.add(exec_id)
 
         side = SignalType.BUY if execution.side == "BOT" else SignalType.SELL
-        symbol = (
-                getattr(contract, "symbol", None)
-                or getattr(contract, "localSymbol", None)
-                or "UNKNOWN"
-        )
+        symbol = ib_symbol(contract)
 
         self._fill_queue.append(
             Fill(
@@ -322,6 +324,33 @@ def _from_payload(payload: Mapping[str, Any]) -> Order:
         limit_price=payload.get("limit_price"),
         liquidity=None if liquidity is None else Liquidity(str(liquidity)),
     )
+
+
+def ib_contract(contract: TradedContract) -> Contract:
+    """The IBKR contract for one of ours: an option when it has a right, a share otherwise."""
+    if contract.right is None or contract.expiry is None or contract.strike is None:
+        return Stock(contract.underlier, "SMART", "USD")
+    return Option(
+        contract.underlier,
+        contract.expiry.strftime("%Y%m%d"),
+        float(contract.strike),
+        "C" if contract.right is Right.CALL else "P",
+        "SMART",
+        multiplier=str(int(contract.multiplier)),
+        currency="USD",
+    )
+
+
+def ib_symbol(contract: Contract) -> str:
+    """
+    What we call an IBKR contract: an option's local symbol, which IB gives in the OCC form the
+    registry is keyed by, and anything else's ticker. ``symbol`` on an option is its underlier.
+    """
+    if getattr(contract, "secType", None) == "OPT":
+        local = str(getattr(contract, "localSymbol", "") or "").strip()
+        if local:
+            return local
+    return getattr(contract, "symbol", None) or "UNKNOWN"
 
 
 def _commission(fill: IBFill) -> float | None:

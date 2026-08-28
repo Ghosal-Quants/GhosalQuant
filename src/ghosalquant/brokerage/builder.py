@@ -1,10 +1,13 @@
 from ..brokerage.broker_base import Broker
+from ..core.contracts import ContractRegistry
 from .simulated import SimBroker
 from .ibkr import IBKRBroker
 from ..util.config import BrokerType, BrokerConfig, ConfigError
 
 
-def build_broker(broker_config: BrokerConfig) -> Broker:
+def build_broker(
+        broker_config: BrokerConfig, *, contracts: ContractRegistry | None = None
+) -> Broker:
     if not isinstance(broker_config, BrokerConfig):
         raise ConfigError("A valid broker configuration must be provided.")
 
@@ -32,7 +35,8 @@ def build_broker(broker_config: BrokerConfig) -> Broker:
             host=broker_config.ibkr.host,
             port=broker_config.ibkr.port,
             client_id=broker_config.ibkr.client_id,
-            mode=broker_config.mode
+            mode=broker_config.mode,
+            contracts=contracts,
         )
     else:
         raise ValueError(f"Unsupported broker type: {broker_config.type}")

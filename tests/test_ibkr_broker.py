@@ -1,14 +1,17 @@
 import asyncio
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
 from ghosalquant.brokerage import ibkr
-from ghosalquant.brokerage.ibkr import IBKRBroker
+from ghosalquant.brokerage.ibkr import IBKRBroker, ib_contract, ib_symbol
 from ghosalquant.brokerage.open_orders import OpenOrderQueries
+from ib_insync import Stock
+
 from ghosalquant.core import metadata_keys
-from ghosalquant.core.types import BookLevel, Order, OrderBook, Signal, SignalType
+from ghosalquant.core.contracts import Contract as TradedContract, ContractRegistry, Right
+from ghosalquant.core.types import Bar, BookLevel, Order, OrderBook, Signal, SignalType
 from ghosalquant.data_layer.list_datasource import ListDataSource
 from ghosalquant.execution.execution_system import ExecutionSystem
 from ghosalquant.execution.strategy_base import OrderBookStrategy
@@ -31,6 +34,17 @@ T0 = datetime(2026, 6, 1, 14, 30, tzinfo=timezone.utc)
 @dataclass
 class FakeContract:
     symbol: str
+    sec_type: str = "STK"
+    local_symbol: str = ""
+
+    # ib_insync spells these in camelCase; the broker reads them by those names.
+    @property
+    def secType(self) -> str:
+        return self.sec_type
+
+    @property
+    def localSymbol(self) -> str:
+        return self.local_symbol
 
 
 @dataclass
@@ -510,3 +524,199 @@ def test_an_execution_moves_the_position_once_through_the_whole_chain(tmp_path, 
 
     assert once == 2.0
     assert portfolio.open_qty_by_symbol.get("AAPL", 0.0) == 2.0
+
+
+# ----- Options reach the venue as options ----- #
+
+OCC = "AAPL  260116C00150000"
+
+
+def _call() -> TradedContract:
+    return TradedContract(
+        symbol=OCC, underlier="AAPL", multiplier=100.0, right=Right.CALL,
+        strike=150.0, expiry=date(2026, 1, 16),
+    )
+
+
+def _option_order(symbol: str = OCC) -> Order:
+    return Order(
+        time_stamp=T0, symbol=symbol, side=SignalType.BUY, quantity=1.0,
+        ref_price=5.0, limit_price=5.0,
+    )
+
+
+def test_a_registered_option_is_submitted_as_an_option():
+    contract = ib_contract(_call())
+
+    assert contract.secType == "OPT"
+    assert contract.symbol == "AAPL"
+    assert contract.lastTradeDateOrContractMonth == "20260116"
+    assert (contract.strike, contract.right, contract.multiplier) == (150.0, "C", "100")
+
+
+def test_anything_not_registered_is_still_submitted_as_a_share(fake_ib):
+    broker = IBKRBroker()
+    broker.submit(Order(
+        time_stamp=T0, symbol="AAPL", side=SignalType.BUY, quantity=1.0, ref_price=100.0,
+    ))
+
+    assert fake_ib.placed[0][0].secType == "STK"
+
+
+def test_the_broker_builds_the_option_from_its_registry(fake_ib):
+    broker = IBKRBroker(contracts=ContractRegistry([_call()]))
+    broker.submit(_option_order())
+
+    assert fake_ib.placed[0][0].secType == "OPT"
+    assert fake_ib.placed[0][0].strike == 150.0
+
+
+def test_an_explicit_contract_override_still_wins(fake_ib):
+    override = Stock("AAPL", "SMART", "USD")
+    override.symbol = OCC
+    broker = IBKRBroker(contract_overrides=[override], contracts=ContractRegistry([_call()]))
+    broker.submit(_option_order())
+
+    assert fake_ib.placed[0][0].secType == "STK"
+
+
+# ----- And come back under the symbol we know them by ----- #
+
+def test_an_option_is_named_by_its_local_symbol_not_its_underlier():
+    option_contract = FakeContract("AAPL", sec_type="OPT", local_symbol=OCC)
+
+    assert ib_symbol(option_contract) == OCC
+    assert ib_symbol(FakeContract("AAPL")) == "AAPL"
+
+
+def test_an_option_execution_is_reported_against_the_option(fake_ib):
+    broker = IBKRBroker(contracts=ContractRegistry([_call()]))
+    deliver(broker, FakeFill(
+        contract=FakeContract("AAPL", sec_type="OPT", local_symbol=OCC),
+        execution=FakeExecution(execId="x1", orderId=1, shares=1.0, price=5.0),
+        commissionReport=FakeCommission(0.65), time=T0,
+    ))
+
+    # Reporting it as "AAPL" would credit the fill to the stock position.
+    assert broker.get_fills()[0].symbol == OCC
+
+
+def test_option_and_stock_orders_are_told_apart(fake_ib):
+    fake_ib.open_trades = [
+        FakeIBTrade(FakeContract("AAPL", sec_type="OPT", local_symbol=OCC),
+                    FakeIBOrder(1, "BUY", 1.0, 5.0), _remaining=1.0),
+        FakeIBTrade(FakeContract("AAPL"), FakeIBOrder(2, "BUY", 100.0, 150.0), _remaining=100.0),
+    ]
+    broker = IBKRBroker(contracts=ContractRegistry([_call()]))
+
+    assert [view.broker_order_id for view in broker.open_order_views(OCC)] == ["1"]
+    assert [view.broker_order_id for view in broker.open_order_views("AAPL")] == ["2"]
+
+    assert broker.cancel_open_orders(OCC) == 1
+    assert fake_ib.cancelled == [1]
+
+
+def test_an_option_goes_out_as_an_option_and_comes_back_as_one(fake_ib):
+    """
+    The live path end to end: registry -> IBKR contract -> execution -> position.
+
+    Everything between the strategy and the venue treats the symbol as opaque, so this is the only
+    place the OCC symbol has to survive a round trip through IBKR's own naming.
+    """
+    registry = ContractRegistry([TradedContract.from_occ(OCC)])
+    portfolio = BasicPortfolio(init_capital=100_000.0, contracts=registry)
+    broker = IBKRBroker(contracts=registry)
+    system = ExecutionSystem(
+        ListDataSource([_book(0, price=5.0, symbol=OCC)]), _Quoter(),
+        portfolio=portfolio, broker=broker, contracts=registry,
+        risk_manager=RiskManager(rules=[IntegerQuantity()]),
+    )
+    asyncio.run(system.run())
+
+    sent, _ = fake_ib.placed[0]
+    assert (sent.secType, sent.symbol, sent.strike) == ("OPT", "AAPL", 150.0)
+
+    deliver(broker, FakeFill(
+        contract=FakeContract("AAPL", sec_type="OPT", local_symbol=OCC),
+        execution=FakeExecution(execId="e1", orderId=1, shares=1.0, price=5.0),
+        commissionReport=FakeCommission(0.65), time=T0,
+    ))
+    for fill in broker.get_fills():
+        asyncio.run(portfolio.process_fill(fill))
+
+    assert portfolio.open_qty_by_symbol == {OCC: 1.0}
+    # One contract of premium is 100 shares' worth, not one.
+    assert portfolio.cash_balance == pytest.approx(100_000.0 - 500.0 - 0.65)
+
+
+PUT = "AAPL  260116P00150000"
+
+
+def test_the_account_is_read_with_options_named_priced_and_signed_as_they_are_held(fake_ib):
+    """
+    IB describes an option by its underlier, prices it per contract, and signs a short negative.
+
+    Taken literally that is a long AAPL stock position at 100x the premium; every part of this has
+    to be undone before the numbers mean anything.
+    """
+    fake_ib.account_values = [FakeAccountValue("TotalCashValue", "100000")]
+    fake_ib.account_positions = [
+        FakePosition(FakeContract("AAPL", sec_type="OPT", local_symbol=PUT), -2.0, 300.0),
+        FakePosition(FakeContract("AAPL"), 100.0, 148.0),
+        FakePosition(FakeContract("MSFT"), 0.0, 50.0),
+    ]
+    broker = IBKRBroker(contracts=ContractRegistry([TradedContract.from_occ(PUT)]))
+
+    cash, positions = broker.account_snapshot()
+
+    assert cash == 100_000.0
+    assert positions == {PUT: (-2.0, 3.0), "AAPL": (100.0, 148.0)}
+
+
+def test_a_sold_put_is_carried_from_the_account_through_to_assignment(fake_ib):
+    """
+    The whole options path in one run: IBKR account -> portfolio -> expiry -> stock.
+
+    Two puts sold for 3.00 against a 150 strike, expiring with AAPL at 145. The 1,000 lost on
+    assignment is offset by the 600 already collected, so the account ends 400 down.
+    """
+    registry = ContractRegistry([TradedContract.from_occ(PUT)])
+    fake_ib.account_values = [FakeAccountValue("TotalCashValue", "100000")]
+    fake_ib.account_positions = [
+        FakePosition(FakeContract("AAPL", sec_type="OPT", local_symbol=PUT), -2.0, 300.0)
+    ]
+    broker = IBKRBroker(contracts=registry)
+    portfolio = BasicPortfolio(init_capital=1.0, contracts=registry)
+
+    cash, positions = broker.account_snapshot()
+    portfolio.adopt(cash, positions, time_stamp=datetime(2026, 1, 15, tzinfo=timezone.utc))
+    assert portfolio.open_qty_by_symbol == {PUT: -2.0}
+    assert portfolio.current_equity == pytest.approx(99_400.0)
+
+    system = ExecutionSystem(
+        ListDataSource([_underlier(15, 152.0), _underlier(16, 145.0), _underlier(20, 145.0)]),
+        _Idle(), portfolio=portfolio, broker=broker, contracts=registry,
+        risk_manager=RiskManager(rules=[]),
+    )
+    asyncio.run(system.run())
+
+    assert portfolio.open_qty_by_symbol == {"AAPL": 200.0}
+    assert portfolio.cash_balance == pytest.approx(100_000.0 - 200 * 150.0)
+    assert portfolio.realised_pnl == pytest.approx(600.0)
+    assert portfolio.current_equity == pytest.approx(99_000.0)
+
+
+class _Idle(OrderBookStrategy):
+    def on_start(self) -> None: ...
+
+    def on_end(self) -> None: ...
+
+    def on_market_data(self, event, context=None): return None
+
+    def on_order_book(self, book, context=None): return None
+
+
+def _underlier(day: int, price: float) -> Bar:
+    at = datetime(2026, 1, day, 21, 0, tzinfo=timezone.utc)
+    return Bar(time_stamp=at, symbol="AAPL", open=price, high=price, low=price,
+               close=price, volume=1_000.0)

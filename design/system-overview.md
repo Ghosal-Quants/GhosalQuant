@@ -304,6 +304,10 @@ A contract trades until `settlement_time` on its expiry date (21:00 by default, 
 timezone), so the expiry session still belongs to the strategy; a date that has passed settles it regardless, for
 data that stops before the close.
 
+The registry is what a live run is routed by. Pass one to `Backtester` (or `Backtester.from_config`) and it reaches
+the portfolio, the risk context, the data source and the broker together, which is what a strategy needs to run
+unchanged from a backtest to a venue.
+
 `settlement_fills(contract, quantity, underlier_price)`
 says what that means: cash settlement closes the option at its intrinsic value, physical settlement converts it —
 the option closes at nothing and the underlier trades at the strike, which is what exercise and assignment do.
@@ -385,7 +389,7 @@ then bar — so a print can fill a resting order before the strategy sees the po
 | `ListDataSource` | `data_layer.list_datasource` | Wraps a `Sequence[MarketEvent]` (bars, order books, public trades) and yields them in order. Useful for testing. |
 | `MergedDataSource` | `data_layer.merge` | K-way merge of several sources by `time_stamp`; built with `merge_datasources(...)`. |
 | `ParquetPolygonDataSource` | `data_layer.parquet_polygon_datasource` | Reads Polygon OHLCV data from a local `.parquet` file. Supports date/session filtering and timeframe resampling. Driven by `Config`. |
-| `LiveIBKRDataSource` | `data_layer.live_ibkr_datasource` | Streams live IBKR data via `ib_insync` and steps down to delayed data when live market data is unavailable. `events` selects `bars` (throttled ticks -> `Bar`), `order_books` (`reqMktDepth` with `depth` rows -> `OrderBook`, at most every `book_resolution_sec`), and `trades` (tick-by-tick -> `PublicTrade`). |
+| `LiveIBKRDataSource` | `data_layer.live_ibkr_datasource` | Streams live IBKR data via `ib_insync` and steps down to delayed data when live market data is unavailable. `events` selects `bars` (throttled ticks -> `Bar`), `order_books` (`reqMktDepth` with `depth` rows -> `OrderBook`, at most every `book_resolution_sec`), and `trades` (tick-by-tick -> `PublicTrade`). Given a `ContractRegistry` it subscribes to registered options as options and emits them under their own symbol rather than their underlier's ticker. |
 | `LivePolygonDataSource` | `data_layer.live_polygon_datasource` | Streams live (or 15-min delayed) data from Polygon's WebSocket API with automatic reconnection. `events` selects `bars` (`A`/`AM`, `1SEC` or `1MIN`), `quotes` (`Q` -> one-level `OrderBook`), and `trades` (`T` -> `PublicTrade`). |
 | `RecordingDataSource` | `data_layer.recording_datasource` | Wraps any source and records every event on its way through, without changing what the strategy sees. |
 | `RecordedDataSource` | `data_layer.recording_datasource` | Replays a recording as a time-ordered `MarketEvent` stream, filtered by kind, symbol, and time window. |
@@ -772,6 +776,9 @@ or Gateway. Supports:
   `CashAllocationRule` measure committed capital from `RiskContext.open_orders`, which stays empty for a broker
   that cannot report — so without this they were blind live.
 - Commission taken from IB's `commissionReport` rather than left empty.
+- Routing whatever the registry describes: `ib_contract` builds an IBKR `Option` for a symbol registered as one and
+  a `Stock` otherwise, and `ib_symbol` names what comes back. An option's IB `symbol` is its *underlier*, so
+  without this every option fill and resting order would be reported against the stock and net into it.
 
 - `account_snapshot()` returns cash and positions shaped for `BasicPortfolio.adopt`, so a live session starts from
   what the account holds rather than from `init_capital`.
@@ -787,8 +794,8 @@ What it still does not do: resolve those indeterminate orders for you. Deciding 
 comparing against `open_order_views` and the account's executions, and getting it wrong sends the order twice.
 
 ### 9.5 Broker Builder
-`build_broker(broker_config)` in `ghosalquant.brokerage.builder` constructs a `SimBroker` or `IBKRBroker` from a
-`BrokerConfig` dataclass.
+`build_broker(broker_config, contracts=...)` in `ghosalquant.brokerage.builder` constructs a `SimBroker` or
+`IBKRBroker` from a `BrokerConfig` dataclass.
 
 ## 10 Configuration
 The system can be configured with a `Config` dataclass, created from a `config.yaml` file and parsed by

@@ -4,8 +4,10 @@ import sys
 from datetime import datetime, timezone
 from typing import AsyncIterable, Iterable, Sequence
 
-from ib_insync import IB, Stock, Contract
+from ib_insync import IB, Contract
 
+from ghosalquant.brokerage.ibkr import ib_contract, ib_symbol
+from ghosalquant.core.contracts import ContractRegistry
 from ghosalquant.core.types import Bar, BookLevel, MarketEvent, OrderBook, PublicTrade
 from ghosalquant.data_layer.datasource_base import DataSource
 
@@ -39,13 +41,23 @@ class LiveIBKRDataSource(DataSource):
             events: Iterable[str] = ("bars",),
             depth: int | None = None,
             book_resolution_sec: float = 0.0,
+            contracts: ContractRegistry | None = None,
     ):
+        self.contracts = contracts if contracts is not None else ContractRegistry()
         self._contracts = []
+        # An option has no local symbol until IB qualifies it, so remember what we asked for.
+        self._names: dict[tuple, str] = {}
         for sym in symbols:
             if isinstance(sym, Contract):
                 self._contracts.append(sym)
-            elif isinstance(sym, str) and sym.strip(): # Assume US stock
-                self._contracts.append(Stock(sym.strip().upper(), 'SMART', 'USD'))
+            elif isinstance(sym, str) and sym.strip():
+                # A registered symbol is taken as it was registered; anything else is a US ticker.
+                name = sym.strip()
+                if name not in self.contracts:
+                    name = name.upper()
+                built = ib_contract(self.contracts.get(name))
+                self._names[_contract_key(built)] = name
+                self._contracts.append(built)
             else:
                 raise ValueError(f"Invalid symbol or contract provided: {sym}")
 
@@ -58,7 +70,7 @@ class LiveIBKRDataSource(DataSource):
         if book_resolution_sec < 0.0:
             raise ValueError("book_resolution_sec must be >= 0")
 
-        self.symbols = tuple(c.symbol for c in self._contracts)
+        self.symbols = tuple(self._name_of(c) for c in self._contracts)
         self.host = host
         self.port = port
         self.client_id = client_id
@@ -66,6 +78,9 @@ class LiveIBKRDataSource(DataSource):
         self.depth = depth if depth is not None else (DEFAULT_DEPTH_ROWS if "order_books" in self.events else None)
         self.book_resolution_sec = book_resolution_sec
         self.ib = IB()
+
+    def _name_of(self, contract: Contract) -> str:
+        return self._names.get(_contract_key(contract)) or ib_symbol(contract)
 
     async def __aiter__(self) -> AsyncIterable[MarketEvent]:
         if not self.ib.isConnected():
@@ -105,7 +120,7 @@ class LiveIBKRDataSource(DataSource):
         def on_pending_tickers(pending_tickers):
             now = datetime.now(timezone.utc)
             for t in pending_tickers:
-                sym = t.contract.symbol
+                sym = self._name_of(t.contract)
 
                 if want_trades and t.tickByTicks:
                     for trade in trades_from_ticks(sym, t.tickByTicks, fallback_time=now):
@@ -219,3 +234,13 @@ def _normalise_event_kinds(events: Iterable[str], allowed: tuple[str, ...]) -> t
     if unknown:
         raise ValueError(f"Unsupported event kinds {unknown}; use {allowed}")
     return kinds
+
+
+def _contract_key(contract: Contract) -> tuple:
+    return (
+        getattr(contract, "secType", ""),
+        getattr(contract, "symbol", ""),
+        getattr(contract, "lastTradeDateOrContractMonth", ""),
+        float(getattr(contract, "strike", 0.0) or 0.0),
+        getattr(contract, "right", ""),
+    )

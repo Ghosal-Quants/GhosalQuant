@@ -1,9 +1,10 @@
 from ghosalquant.data_layer.parquet_polygon_datasource import ParquetPolygonDataSource
 from ghosalquant.data_layer.yfinance_multi_datasource import YFinanceMultiDataSource
 from ghosalquant.data_layer.live_ibkr_datasource import LiveIBKRDataSource
+from ghosalquant.core.contracts import ContractRegistry
 from ghosalquant.util.config import Config, ConfigError, DataSrcType
 
-def datasource_from_config(cfg: Config):
+def datasource_from_config(cfg: Config, *, contracts: ContractRegistry | None = None):
     events = tuple(cfg.data.events) if cfg.data.events else ("bars",)
 
     match cfg.data.source:
@@ -33,6 +34,7 @@ def datasource_from_config(cfg: Config):
                 events=events,
                 depth=cfg.data.live_ibkr.depth,
                 book_resolution_sec=cfg.data.live_ibkr.book_resolution_sec,
+                contracts=contracts,
             )
 
 
