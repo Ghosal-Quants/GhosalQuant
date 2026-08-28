@@ -21,3 +21,5 @@ venv/
 .env.*
 !.env.example
 src/ghosalquant/data_layer/data/*.parquet
+# Market data is licensed and large; keep it local.
+datasets/
