@@ -39,9 +39,10 @@ def calculate_stats(df_results: pd.DataFrame) -> BacktestKPMs:
     Calculates key performance metrics
     """
 
-    if df_results is None:
+    if df_results is None or df_results.empty:
         print("No trades")
-        return BacktestKPMs(total_trades=0, total_wins=0, total_losses=0, win_rate_pct=0.0, total_pnl=0.0)
+        return BacktestKPMs(total_trades=0, total_wins=0, total_losses=0, win_rate_pct=0.0,
+                            realised_pnl=0.0, unrealised_pnl=0.0, total_pnl=0.0)
 
     ttl_trades = len(df_results)
 
@@ -65,6 +66,9 @@ def calculate_stats(df_results: pd.DataFrame) -> BacktestKPMs:
         total_wins= total_wins,
         total_losses= total_losses,
         win_rate_pct= win_rate,
+        # Only closed trades reach here, so there is nothing outstanding to be unrealised.
+        realised_pnl= total_pnl,
+        unrealised_pnl= 0.0,
         total_pnl= total_pnl
     )
 
