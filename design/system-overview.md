@@ -326,6 +326,13 @@ Built from real NSE NIFTY settlement prices it recovers the expected equity smil
 against 30% on the downside wing) and the expected event response: the index rose 5.45% on 2019-09-20 and
 at-the-money vol went from 14.7% to 31.4%, decaying back over the following five weeks.
 
+`portfolio.attribution.attribute` splits a position's change in value over one step into delta, gamma, vega and
+theta, with the remainder as `unexplained`. An option can lose while the underlier goes its way — the move earns
+through delta and gamma, time is paid back through theta, and a fall in implied vol takes the rest through vega —
+so a total alone cannot say whether a losing strategy was wrong about direction or merely bought its option too
+dear. Run over the momentum example on real data it reports a book of +4,872 delta, +2,870 gamma, +178 vega and
+-2,305 theta: a leveraged directional bet carrying a premium cost, rather than the volatility trade it looks like.
+
 `settlement_fills(contract, quantity, underlier_price)`
 says what that means: cash settlement closes the option at its intrinsic value, physical settlement converts it —
 the option closes at nothing and the underlier trades at the strike, which is what exercise and assignment do.

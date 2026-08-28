@@ -8,6 +8,7 @@ from ghosalquant.core.blackscholes import greeks, implied_volatility, price, ten
 from ghosalquant.core.contracts import Contract, ContractRegistry, Right
 from ghosalquant.core.types import BookLevel, OrderBook
 from ghosalquant.core.volatility import VolSurface
+from ghosalquant.portfolio.attribution import Attribution, attribute
 
 NOW = datetime(2026, 1, 2, 21, 0)
 SPOT = 100.0
@@ -177,3 +178,63 @@ def test_a_surface_can_be_built_from_the_books_the_system_already_gets():
 
     assert surface
     assert surface.vol(option(Right.CALL, 95.0, 30), SPOT, NOW) == pytest.approx(0.30, abs=0.02)
+
+
+# ----- Where the money came from ----- #
+
+def _attribute(**overrides):
+    call = option(Right.CALL, 100.0, days=30)
+    step = dict(
+        spot_before=SPOT, spot_after=SPOT, vol_before=0.25, vol_after=0.25,
+        at_before=NOW, at_after=NOW, rate=0.0, dividend=0.0,
+    )
+    step.update(overrides)
+    step["value_before"] = price(call, step["spot_before"], step["vol_before"], step["at_before"])
+    step["value_after"] = price(call, step["spot_after"], step["vol_after"], step["at_after"])
+    return attribute(call, 1.0, **step)
+
+
+def test_a_move_in_the_underlier_shows_up_as_delta_and_gamma():
+    moved = _attribute(spot_after=SPOT + 2.0)
+
+    assert moved.delta > 0.0
+    assert moved.gamma > 0.0, "a long option is long gamma, so the move helps twice"
+    assert (moved.vega, moved.theta) == (0.0, 0.0)
+    assert moved.explained == pytest.approx(moved.total, rel=0.02)
+
+
+def test_a_fall_in_implied_vol_shows_up_as_vega():
+    cheapened = _attribute(vol_after=0.20)
+
+    assert cheapened.vega < 0.0
+    assert (cheapened.delta, cheapened.gamma) == (0.0, 0.0)
+    assert cheapened.total < 0.0, "nothing moved, but the option is worth less"
+
+
+def test_time_alone_shows_up_as_theta():
+    """
+    Theta explains a day well and a week less well, because theta itself accelerates.
+
+    That shortfall is not lost: what a first-order term cannot account for is exactly what
+    ``unexplained`` is for.
+    """
+    a_day = _attribute(at_after=NOW + timedelta(days=1))
+    assert a_day.theta < 0.0
+    assert a_day.explained == pytest.approx(a_day.total, rel=0.02)
+
+    a_week = _attribute(at_after=NOW + timedelta(days=7))
+    assert a_week.theta == pytest.approx(a_day.theta * 7, rel=1e-9), "theta is linear in time"
+    assert a_week.total < a_week.theta, "but the real decay is worse than the straight line"
+    assert a_week.unexplained < 0.0
+    assert a_week.explained + a_week.unexplained == pytest.approx(a_week.total)
+
+
+def test_the_pieces_add_up_to_what_actually_happened():
+    """The whole point: explained plus unexplained is the position's real change in value."""
+    everything = _attribute(spot_after=SPOT + 3.0, vol_after=0.28, at_after=NOW + timedelta(days=5))
+
+    assert everything.total == pytest.approx(everything.explained + everything.unexplained)
+    assert abs(everything.unexplained) < abs(everything.total) * 0.15
+    # Summing positions is how a book is attributed, so the pieces have to add.
+    assert (everything + everything).delta == pytest.approx(everything.delta * 2)
+    assert (everything + Attribution()).total == pytest.approx(everything.total)
