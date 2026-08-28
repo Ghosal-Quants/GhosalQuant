@@ -29,3 +29,18 @@ def sizing_capital(
         raise ValueError("reference_capital must be > 0")
     equity = current_equity(context)
     return capital if equity is None else capital * max(1.0, equity) / reference_capital
+
+
+def kelly_fraction(win_probability: float, gain: float, loss: float) -> float:
+    """
+    The growth-optimal stake for an asymmetric bet: ``(p*b - q*a) / (a*b)``.
+
+    ``gain`` and ``loss`` are fractions of the stake; zero back means no edge.
+    """
+    p = float(win_probability)
+    b, a = float(gain), float(loss)
+    if not 0.0 <= p <= 1.0:
+        raise ValueError("win_probability must be in [0, 1]")
+    if b <= 0.0 or not 0.0 < a <= 1.0:
+        raise ValueError("gain must be > 0 and loss in (0, 1]")
+    return max(0.0, (p * b - (1.0 - p) * a) / (a * b))

@@ -326,6 +326,15 @@ Built from real NSE NIFTY settlement prices it recovers the expected equity smil
 against 30% on the downside wing) and the expected event response: the index rose 5.45% on 2019-09-20 and
 at-the-money vol went from 14.7% to 31.4%, decaying back over the following five weeks.
 
+`risk.sizing.kelly_fraction` gives the growth-optimal stake for an asymmetric bet, and
+`FractionalKellySizer` applies it: the signal supplies a win probability (its `confidence`) with
+`take_profit` and `stop_loss` as fractions of the price paid, and a trade with no edge is blocked
+rather than sized to nothing. It stakes a *fraction* of what Kelly asks for, because Kelly is
+optimal only when its inputs are known and here they are estimated — the growth curve is flat below
+the optimum and falls away steeply above it, so overbetting a bad estimate costs far more than
+underbetting a good one (Lillo, Mazzarisi and Tsaknaki, 2025). At +50% against -35% the break-even
+strike rate is 41.2%, so a strategy that cannot beat that is told to stop rather than sized down.
+
 `portfolio.hedging.net_delta` measures a book's exposure to one underlier in shares of it, and `hedge_quantity`
 says what to trade to flatten it. Hedging is what separates a view on volatility from a view on direction: an
 unhedged option makes most of its money on the underlier moving the right way, which is a bet the option was an

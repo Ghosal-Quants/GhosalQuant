@@ -9,7 +9,7 @@ from examples.example_options_momentum import (
     occ_symbol,
     run,
 )
-from ghosalquant.core.contracts import Contract, Right
+from ghosalquant.core.contracts import Contract, ContractRegistry, Right
 from ghosalquant.core.types import Bar, OrderBook, SignalType
 
 
@@ -95,7 +95,8 @@ def test_the_round_trips_reconcile_with_the_multiplier():
 
 def test_a_stop_closes_the_trade_that_goes_the_wrong_way():
     """The rally fades, so a trade held through it has to be stopped out rather than run."""
-    strategy, portfolio, _ = run(target=99.0, stop=-0.10)
+    # No Kelly: an unreachable target disables the target exit, and the sizer refuses it.
+    strategy, portfolio, _ = run(target=99.0, stop=-0.10, kelly=None)
 
     sold = [fill for fill in strategy.fills if fill.side is SignalType.SELL]
     buys = [fill for fill in strategy.fills if fill.side is SignalType.BUY]
@@ -114,7 +115,7 @@ def test_a_long_put_held_to_expiry_is_exercised_into_short_stock():
     signed position, the multiplier and settlement all having to agree at once.
     """
     strategy, portfolio, _ = run(
-        target=99.0, stop=-0.99, max_hold_minutes=100_000, close_before_expiry=False,
+        target=99.0, stop=-0.99, max_hold_minutes=100_000, close_before_expiry=False, kelly=None,
         # Reach for the expiring contract: cheap and wide, which the live strategy declines.
         min_days_to_expiry=0, max_spread=0.6, min_premium_fraction=0.0,
     )
@@ -130,3 +131,49 @@ def test_a_long_put_held_to_expiry_is_exercised_into_short_stock():
     # The premium is the whole loss on the option leg; the stock leg opened at the strike.
     assert portfolio.realised_pnl == pytest.approx(-put.price * put.quantity * MULTIPLIER)
     assert portfolio.average_entry_price(UNDERLIER) == pytest.approx(contract.strike)
+
+
+def test_with_no_edge_assumed_it_does_not_trade_at_all():
+    """
+    The Kelly sizer's whole point: a fairly priced option is not a bet worth making.
+
+    ``continuation`` is the strategy's belief that the move carries on. Set it to zero and the
+    only thing left is a fairly priced option, so there is no edge and nothing should be bought.
+    """
+    strategy, portfolio, kpms = run(kelly=0.25, continuation=0.0)
+
+    assert strategy.fills == []
+    assert portfolio.open_qty_by_symbol == {}
+    assert kpms.total_trades == 0
+
+
+def test_a_stronger_belief_in_the_move_buys_more_of_it():
+    timid, _, _ = run(kelly=0.25, continuation=0.4)
+    bold, _, _ = run(kelly=0.25, continuation=0.8)
+
+    first_timid = next(f for f in timid.fills if f.side is SignalType.BUY)
+    first_bold = next(f for f in bold.fills if f.side is SignalType.BUY)
+    assert first_bold.quantity > first_timid.quantity
+
+
+def test_the_bar_interval_is_measured_rather_than_assumed():
+    """
+    The hold is converted to bars to scale volatility, so the bar size has to be the real one.
+
+    Assuming the fixture's five minutes made the estimate meaningless on daily bars: sigma came
+    out seventeen times too large, which pins the probability at a half whatever the drift.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from examples.example_options_momentum import BAR_MINUTES, MomentumOptionBuyer
+    from ghosalquant.core.types import Bar
+
+    strategy = MomentumOptionBuyer(ContractRegistry(build_chain()))
+    assert strategy._bar_seconds == BAR_MINUTES * 60.0, "starts at the configured default"
+
+    at = datetime(2026, 3, 2, 14, 30, tzinfo=timezone.utc)
+    for day in range(3):
+        when = at + timedelta(days=day)
+        strategy.on_market_data(Bar(time_stamp=when, symbol=UNDERLIER, open=150.0, high=150.0,
+                                    low=150.0, close=150.0, volume=1.0))
+    assert strategy._bar_seconds == 86_400.0, "daily bars, measured from the stream"

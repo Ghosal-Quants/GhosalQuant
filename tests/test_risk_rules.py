@@ -6,6 +6,7 @@ import pytest
 
 from ghosalquant.brokerage.order_book_sim import OrderBookSimBroker
 from ghosalquant.core import metadata_keys
+from ghosalquant.core.contracts import Contract, ContractRegistry
 from ghosalquant.core.types import (
     BookLevel,
     Liquidity,
@@ -18,8 +19,10 @@ from ghosalquant.core.types import (
 from ghosalquant.data_layer.list_datasource import ListDataSource
 from ghosalquant.execution.execution_system import ExecutionSystem
 from ghosalquant.execution.strategy_base import OrderBookStrategy
+from ghosalquant.risk.sizing import kelly_fraction
 from ghosalquant.portfolio.basic_portfolio import BasicPortfolio
 from ghosalquant.risk import (
+    FractionalKellySizer,
     CashAllocationConfig,
     CashAllocationRule,
     ConfidenceSizer,
@@ -534,7 +537,7 @@ def test_a_held_symbol_without_enough_history_is_passed_over():
         open_qty_by_symbol={"THIN": 1.0}, price_history=history
     )
 
-    # No opinion about THIN rather than one drawn from three points.
+    # THIN has three observations, too few to correlate on.
     assert rule.apply(draft(symbol="NEW"), context) is True
 
 
@@ -555,3 +558,84 @@ def test_a_sell_and_a_flat_book_are_outside_the_filter():
 
     assert rule.apply(draft(symbol="NEW", side=SignalType.SELL), context) is True
     assert rule.apply(draft(symbol="NEW"), RiskContext(price_history=_correlated_history(10))) is True
+
+
+# ----- Sizing by the edge ----- #
+
+OPTION = Contract.from_occ("AAPL  260116C00150000")
+CHAIN = ContractRegistry([OPTION])
+
+
+def _edge(probability: float, gain: float = 0.5, loss: float = 0.35, **kwargs):
+    settings = dict(quantity=None, price=5.0, symbol=OPTION.symbol)
+    settings.update(kwargs)
+    return draft(
+        **settings,
+        **{metadata_keys.CONFIDENCE: probability, metadata_keys.TAKE_PROFIT: gain,
+           metadata_keys.STOP_LOSS: loss},
+    )
+
+
+def test_kelly_fraction_matches_the_classical_result():
+    # An even-money bet is the textbook 2p-1, and a fair one is no bet at all.
+    assert kelly_fraction(0.6, 1.0, 1.0) == pytest.approx(0.2)
+    assert kelly_fraction(0.5, 1.0, 1.0) == 0.0
+
+    # Asymmetric: +50% against -35% needs better than a 41.2% strike rate to be worth anything.
+    assert kelly_fraction(0.42, 0.5, 0.35) > 0.0
+    assert kelly_fraction(0.40, 0.5, 0.35) == 0.0
+
+    for bad in ((1.5, 0.5, 0.35), (0.5, 0.0, 0.35), (0.5, 0.5, 0.0), (0.5, 0.5, 1.5)):
+        with pytest.raises(ValueError):
+            kelly_fraction(*bad)
+
+
+def test_the_kelly_sizer_refuses_a_bet_with_no_edge():
+    rule = FractionalKellySizer(capital=100_000.0)
+    losing = _edge(0.35)
+
+    assert rule.apply(losing, RiskContext(current_equity=100_000.0, contracts=CHAIN)) is False
+    assert losing.metadata["kelly_full_fraction"] == 0.0
+
+
+def test_it_stakes_a_fraction_of_what_kelly_asks_for():
+    """Kelly is optimal only when its inputs are known; here they are estimated."""
+    context = RiskContext(current_equity=100_000.0, contracts=CHAIN)
+    full = FractionalKellySizer(capital=100_000.0, fraction=1.0, max_notional_fraction=1.0)
+    quarter = FractionalKellySizer(capital=100_000.0, fraction=0.25, max_notional_fraction=1.0)
+
+    whole, part = _edge(0.5), _edge(0.5)
+    assert full.apply(whole, context) and quarter.apply(part, context)
+
+    assert part.metadata["kelly_staked_fraction"] == pytest.approx(
+        whole.metadata["kelly_staked_fraction"] * 0.25
+    )
+    assert part.quantity == pytest.approx(whole.quantity * 0.25)
+
+
+def test_a_confident_signal_is_still_capped():
+    """A probability estimate near certainty is the least trustworthy input of the three."""
+    sized = _edge(0.95)
+    rule = FractionalKellySizer(capital=100_000.0, fraction=1.0, max_notional_fraction=0.05)
+
+    assert rule.apply(sized, RiskContext(current_equity=100_000.0, contracts=CHAIN))
+    assert sized.metadata["kelly_full_fraction"] > 0.05
+    assert sized.metadata["kelly_staked_fraction"] == pytest.approx(0.05)
+    # 5% of 100,000 is 5,000, which buys ten contracts at $5.00 with a hundred-share multiplier.
+    assert sized.quantity == pytest.approx(10.0)
+
+
+def test_a_signal_that_offers_no_estimate_is_left_to_other_rules():
+    rule = FractionalKellySizer(capital=100_000.0)
+    unsized = draft(quantity=7.0)
+
+    assert rule.apply(unsized, RiskContext(current_equity=100_000.0, contracts=CHAIN)) is True
+    assert unsized.quantity == 7.0
+
+
+def test_sells_are_not_sized_by_it():
+    rule = FractionalKellySizer(capital=100_000.0)
+    exit_order = _edge(0.9, side=SignalType.SELL, quantity=3.0)
+
+    assert rule.apply(exit_order, RiskContext(current_equity=100_000.0, contracts=CHAIN)) is True
+    assert exit_order.quantity == 3.0

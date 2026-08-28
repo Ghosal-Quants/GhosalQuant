@@ -17,8 +17,10 @@ import statistics
 from datetime import date, datetime, time, timedelta, timezone
 
 from ghosalquant import OrderBookStrategy
+from ghosalquant.core import metadata_keys
 from ghosalquant.brokerage.order_book_sim import OrderBookSimBroker
 from ghosalquant.core.contracts import Contract, ContractRegistry, Right
+from ghosalquant.core.volatility import VolSurface
 from ghosalquant.core.types import Bar, BookLevel, Fill, Liquidity, OrderBook, Signal, SignalType
 from ghosalquant.data_layer.list_datasource import ListDataSource
 from ghosalquant.execution.context import StrategyContext
@@ -28,6 +30,7 @@ from ghosalquant.portfolio.marks import MarkPolicy
 from ghosalquant.risk import Window
 from ghosalquant.risk.risk_manager import RiskManager
 from ghosalquant.risk.rules.rule_integer_quantity import IntegerQuantity
+from ghosalquant.risk.rules.rule_kelly_sizer import FractionalKellySizer
 from ghosalquant.risk.rules.rule_max_symbol_exposure import MaxSymbolExposure
 from ghosalquant.util.backtester_utils import calculate_kpms
 
@@ -39,7 +42,7 @@ CAPITAL = 100_000.0
 SESSIONS = (date(2026, 3, 2), date(2026, 3, 3), date(2026, 3, 4), date(2026, 3, 5))
 EXPIRIES = (date(2026, 3, 4), date(2026, 3, 11))
 STRIKES = tuple(132.0 + 2.0 * step for step in range(17))
-# Only the strikes near the money are quoted, as a real subscription would be.
+# Only the strikes near the money are quoted.
 CHAIN_WIDTH = 8.0
 BAR_MINUTES = 5
 BARS_PER_SESSION = 78
@@ -91,6 +94,7 @@ class MomentumOptionBuyer(OrderBookStrategy):
         min_premium_fraction: float = 0.005,
         min_days_to_expiry: int = 1,
         max_spread: float = 0.08,
+        continuation: float = 0.5,
         risk_budget: float = 2_500.0,
         close_before_expiry: bool = True,
     ) -> None:
@@ -108,6 +112,7 @@ class MomentumOptionBuyer(OrderBookStrategy):
         self.min_premium_fraction = min_premium_fraction
         self.min_days_to_expiry = min_days_to_expiry
         self.max_spread = max_spread
+        self.continuation = continuation
         self.risk_budget = risk_budget
         self.close_before_expiry = close_before_expiry
 
@@ -115,9 +120,12 @@ class MomentumOptionBuyer(OrderBookStrategy):
         self.moves: list[float] = []
         self.spot = 0.0
         self.move = 0.0
-        # No opinion until the distribution of moves is known, rather than an opinion of zero.
+        # A zero threshold would fire before any history exists.
         self.trigger = math.inf
         self.quotes: dict[str, OrderBook] = {}
+        self._surface, self._surface_at = VolSurface(), None
+        self._last_bar_at: datetime | None = None
+        self._bar_seconds = BAR_MINUTES * 60.0
         self.held_symbol: str | None = None
         self.held = 0.0
         self.entry_price: float | None = None
@@ -137,6 +145,13 @@ class MomentumOptionBuyer(OrderBookStrategy):
         """The underlier arms the trade. It never prices it, because a bar is not a quote."""
         if bar.symbol != UNDERLIER:
             return None
+        # Runs on five-minute bars and on daily ones.
+        if self._last_bar_at is not None:
+            gap = (bar.time_stamp - self._last_bar_at).total_seconds()
+            if gap > 0.0:
+                self._bar_seconds = gap
+        self._last_bar_at = bar.time_stamp
+
         self.spot = bar.close
         self.closes.append(bar.close)
         if len(self.closes) <= self.window:
@@ -187,15 +202,17 @@ class MomentumOptionBuyer(OrderBookStrategy):
 
         wanted = self._target(at, up=self.move > 0.0)
         if wanted is None or wanted.symbol != book.symbol:
-            # Wait for its own quote rather than pricing off the last one.
             return None
 
         ask = book.best_ask.price
         quantity = math.floor(self.risk_budget / (ask * wanted.multiplier))
         if quantity < 1:
             return None
+        edge = self._edge(wanted, ask, at)   # reads self.move, so estimate before clearing it
         self.move = 0.0
-        return self._signal(at, book.symbol, SignalType.BUY, float(quantity), ask)
+        return self._signal(
+            at, book.symbol, SignalType.BUY, float(quantity), ask, edge=edge,
+        )
 
     def _target(self, at: datetime, *, up: bool) -> Contract | None:
         """
@@ -257,7 +274,44 @@ class MomentumOptionBuyer(OrderBookStrategy):
         expiry = self.contracts.get(symbol).expiry
         return expiry is not None and at >= _expires_at(expiry, at) - timedelta(minutes=30)
 
-    def _signal(self, at: datetime, symbol: str, side: SignalType, quantity: float, price: float):
+    def _edge(self, contract: Contract, premium: float, at: datetime) -> dict | None:
+        """
+        The chance of reaching the target, against the volatility already tracked.
+
+        ``continuation`` is the belief that the move carries on. At zero the option is fairly
+        priced, so there is no edge and no bet.
+        """
+        if self._surface_at != at:
+            self._surface = VolSurface.from_books(
+                self.quotes.values(), contracts=self.contracts, spot=self.spot, at=at
+            )
+            self._surface_at = at
+        greeks = self._surface.greeks(contract, self.spot, at)
+        sigma = self._sigma_over_hold()
+        if greeks is None or not greeks.delta or sigma <= 0.0:
+            return None
+
+        move_needed = self.target * premium / abs(greeks.delta)
+        drift = self.continuation * abs(self.move) * self.spot
+        return {
+            metadata_keys.CONFIDENCE: 1.0 - _norm_cdf((move_needed - drift) / sigma),
+            metadata_keys.TAKE_PROFIT: self.target,
+            metadata_keys.STOP_LOSS: abs(self.stop),
+        }
+
+    # RiskManager writes Signal.confidence over the metadata, so the estimate travels there.
+
+    def _sigma_over_hold(self) -> float:
+        """The underlier's standard deviation, in points, over the time the trade is given."""
+        recent = self.vol.of(self.moves)
+        if recent is None or self.spot <= 0.0:
+            return 0.0
+        per_bar = statistics.pstdev(recent) / math.sqrt(self.window)
+        bars = self.max_hold.total_seconds() / self._bar_seconds
+        return self.spot * per_bar * math.sqrt(max(bars, 1.0))
+
+    def _signal(self, at: datetime, symbol: str, side: SignalType, quantity: float, price: float,
+                edge: dict | None = None):
         return Signal(
             time_stamp=at,
             symbol=symbol,
@@ -266,6 +320,8 @@ class MomentumOptionBuyer(OrderBookStrategy):
             quantity=quantity,
             limit_price=price,
             liquidity=Liquidity.TAKER,
+            confidence=1.0 if edge is None else edge[metadata_keys.CONFIDENCE],
+            metadata=edge,
         )
 
 
@@ -347,7 +403,8 @@ def build_events(seed: int = 7, bars: int = BARS_PER_SESSION,
     return events
 
 
-def run(seed: int = 7, bars: int = BARS_PER_SESSION, **strategy_kwargs):
+def run(seed: int = 7, bars: int = BARS_PER_SESSION, *, kelly: float | None = 0.25,
+        **strategy_kwargs):
     chain = build_chain()
     contracts = ContractRegistry(chain)
     strategy = MomentumOptionBuyer(contracts, **strategy_kwargs)
@@ -356,6 +413,9 @@ def run(seed: int = 7, bars: int = BARS_PER_SESSION, **strategy_kwargs):
         data_src=ListDataSource(build_events(seed=seed, bars=bars, chain=chain)),
         strategy=strategy,
         risk_manager=RiskManager(rules=[
+            # Sizing by the edge comes first; the exposure cap is the backstop over the top.
+            *([FractionalKellySizer(capital=CAPITAL, fraction=kelly,
+                                    max_notional_fraction=0.05)] if kelly else []),
             MaxSymbolExposure(capital=CAPITAL, max_notional_fraction=0.05),
             IntegerQuantity(),
         ]),
