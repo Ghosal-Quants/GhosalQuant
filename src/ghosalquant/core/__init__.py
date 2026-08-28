@@ -1,5 +1,12 @@
 from . import metadata_keys
-from .contracts import Contract, ContractRegistry, Right, Settlement
+from .contracts import (
+    Contract,
+    ContractRegistry,
+    Right,
+    Settlement,
+    intrinsic_value,
+    settlement_fills,
+)
 from .types import (
     BacktestKPMs,
     Bar,
@@ -24,6 +31,8 @@ __all__ = [
     "ContractRegistry",
     "Right",
     "Settlement",
+    "intrinsic_value",
+    "settlement_fills",
     "BacktestKPMs",
     "Bar",
     "BookLevel",

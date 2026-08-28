@@ -3,7 +3,11 @@ from datetime import date, datetime
 from enum import Enum
 from typing import Iterable
 
+from .types import Fill, SignalType
+
 OCC_LENGTH = 21
+# The OCC exercises anything in the money by this much, and abandons the rest.
+EXERCISE_THRESHOLD = 0.01
 
 
 class Right(str, Enum):
@@ -99,3 +103,53 @@ class ContractRegistry:
     @property
     def contracts(self) -> tuple[Contract, ...]:
         return tuple(self._by_symbol.values())
+
+
+def intrinsic_value(contract: Contract, underlier_price: float) -> float:
+    """What an option is worth at expiry, and nothing for anything that is not one."""
+    if contract.right is None or contract.strike is None:
+        return 0.0
+    if contract.right is Right.CALL:
+        return max(underlier_price - contract.strike, 0.0)
+    return max(contract.strike - underlier_price, 0.0)
+
+
+def settlement_fills(
+    contract: Contract, quantity: float, underlier_price: float, *, at: datetime
+) -> list[Fill]:
+    """
+    The fills that settle a position at expiry.
+
+    Cash settlement closes the option at intrinsic. Physical settlement converts it: the option
+    closes at nothing and the underlier trades at the strike. Anything not worth
+    ``EXERCISE_THRESHOLD`` is abandoned.
+    """
+    if contract.right is None or contract.expiry is None or abs(quantity) <= 0.0:
+        return []
+
+    held_long = quantity > 0.0
+    intrinsic = intrinsic_value(contract, underlier_price)
+    cash_settled = contract.settlement is Settlement.CASH
+    exercised = not cash_settled and intrinsic >= EXERCISE_THRESHOLD
+
+    fills = [
+        Fill(
+            time_stamp=at,
+            symbol=contract.symbol,
+            side=SignalType.SELL if held_long else SignalType.BUY,
+            quantity=abs(quantity),
+            price=intrinsic if cash_settled else 0.0,
+        )
+    ]
+    if exercised:
+        buys_underlier = (contract.right is Right.CALL) == held_long
+        fills.append(
+            Fill(
+                time_stamp=at,
+                symbol=contract.underlier,
+                side=SignalType.BUY if buys_underlier else SignalType.SELL,
+                quantity=abs(quantity) * contract.multiplier,
+                price=contract.strike,
+            )
+        )
+    return fills

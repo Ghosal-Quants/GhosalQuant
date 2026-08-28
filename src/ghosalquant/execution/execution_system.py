@@ -1,8 +1,9 @@
 import asyncio
+import logging
 import sys
-from datetime import datetime, timedelta
+from datetime import date, datetime, time, timedelta
 
-from ..core.contracts import ContractRegistry
+from ..core.contracts import ContractRegistry, settlement_fills
 from ..core.types import Bar, Fill, MarketEvent, OpenOrderView, Order, OrderBook, PublicTrade, Signal
 from ..data_layer.datasource_base import DataSource
 from ..execution.context import StrategyContext
@@ -15,6 +16,11 @@ from ..portfolio.marks import MarkPolicy, mark_from_book, mark_from_trade
 from ..brokerage.broker_base import Broker
 from ..brokerage.open_orders import OpenOrderQueries
 from ..state.event_store import EventStore
+
+logger = logging.getLogger(__name__)
+
+# US equity options stop trading at 16:00 New York, which is 21:00 UTC outside daylight saving.
+DEFAULT_SETTLEMENT_TIME = time(21, 0)
 
 
 class _LazyContexts:
@@ -59,6 +65,7 @@ class ExecutionSystem:
             snapshot_interval: timedelta = timedelta(seconds=1),
             journal: EventStore | None = None,
             contracts: ContractRegistry | None = None,
+            settlement_time: time = DEFAULT_SETTLEMENT_TIME,
     ) -> None:
 
         self.data_src = data_src
@@ -72,6 +79,7 @@ class ExecutionSystem:
         self.snapshot_interval = snapshot_interval
         self.journal = journal
         self.contracts = contracts if contracts is not None else ContractRegistry()
+        self.settlement_time = settlement_time
 
         self._price_history: dict[str, list[float]] = {}
         self._last_snapshot_at: datetime | None = None
@@ -110,6 +118,10 @@ class ExecutionSystem:
                 # Collect fills from the broker and pass to portfolio
                 if self.broker and self.portfolio:
                     await self._apply_fills(self.broker.get_fills())
+
+                # Settle last: the position and the underlier price both have to be current.
+                if self.portfolio:
+                    await self._settle_expiries(raw.time_stamp)
 
                 contexts = _LazyContexts(self, raw.symbol)
 
@@ -161,6 +173,41 @@ class ExecutionSystem:
             self._call_hook("on_fill", fill)
         if self.journal is not None:
             self.journal.commit()
+
+    async def _settle_expiries(self, until: datetime) -> None:
+        """
+        Settle contracts whose expiry has passed, against the underlier's last known price.
+
+        Settlement arrives as fills, so it is accounted, journalled and reported to the strategy
+        the same way a broker execution is.
+        """
+        if self.portfolio is None:
+            return
+        prices = self.portfolio.last_prices
+        for symbol, quantity in list(self.portfolio.open_qty_by_symbol.items()):
+            contract = self.contracts.get(symbol)
+            if contract.expiry is None or not self._expired(contract.expiry, until):
+                continue
+            price = prices.get(contract.underlier)
+            if price is None:
+                logger.warning("Cannot settle %s: no price for %s", symbol, contract.underlier)
+                continue
+            await self._apply_fills(settlement_fills(contract, quantity, price, at=until))
+
+    def _expired(self, expiry: date, until: datetime) -> bool:
+        """
+        Whether an expiry has passed by ``until``.
+
+        A contract trades until the close, so settling on the day's first event would take the
+        session away from the strategy. The date having advanced settles it too, for data that
+        stops before ``settlement_time``.
+        """
+        if until.date() > expiry:
+            return True
+        closes_at = datetime.combine(expiry, self.settlement_time)
+        if until.tzinfo is not None:
+            closes_at = closes_at.replace(tzinfo=until.tzinfo)
+        return until >= closes_at
 
     # ----- Event routing ----- #
 

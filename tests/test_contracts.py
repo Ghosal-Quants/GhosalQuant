@@ -4,8 +4,24 @@ from datetime import date, datetime, timedelta
 import pytest
 
 from ghosalquant.brokerage.order_book_sim import OrderBookSimBroker
-from ghosalquant.core.contracts import Contract, ContractRegistry, Right, Settlement
-from ghosalquant.core.types import BookLevel, Fill, OpenOrderView, Order, OrderBook, Signal, SignalType
+from ghosalquant.core.contracts import (
+    Contract,
+    ContractRegistry,
+    Right,
+    Settlement,
+    intrinsic_value,
+    settlement_fills,
+)
+from ghosalquant.core.types import (
+    BookLevel,
+    Fill,
+    Liquidity,
+    OpenOrderView,
+    Order,
+    OrderBook,
+    Signal,
+    SignalType,
+)
 from ghosalquant.data_layer.list_datasource import ListDataSource
 from ghosalquant.execution.execution_system import ExecutionSystem
 from ghosalquant.execution.strategy_base import OrderBookStrategy
@@ -83,7 +99,6 @@ def test_a_contract_that_could_not_trade_is_refused():
         Contract(symbol="X", underlier="X", multiplier=0.0)
     with pytest.raises(ValueError):
         Contract(symbol="X", underlier="X", strike=-1.0)
-    # An option without a strike or an expiry is not one.
     with pytest.raises(ValueError):
         Contract(symbol="X", underlier="AAPL", right=Right.CALL, strike=150.0)
 
@@ -377,3 +392,236 @@ def test_a_fill_for_nothing_does_nothing():
 
     assert portfolio.open_qty_by_symbol == {"AAPL": 10.0}
     assert portfolio.cash_balance == pytest.approx(9_000.0)
+
+
+# ----- Expiry ----- #
+
+_EXPIRY = datetime(2026, 1, 16, 16, 0)
+
+
+def call(settlement: Settlement = Settlement.CASH, strike: float = 150.0) -> Contract:
+    return Contract(
+        symbol=OCC, underlier="AAPL", multiplier=100.0, right=Right.CALL,
+        strike=strike, expiry=date(2026, 1, 16), settlement=settlement,
+    )
+
+
+def put(settlement: Settlement = Settlement.CASH, strike: float = 150.0) -> Contract:
+    return Contract(
+        symbol="AAPL  260116P00150000", underlier="AAPL", multiplier=100.0, right=Right.PUT,
+        strike=strike, expiry=date(2026, 1, 16), settlement=settlement,
+    )
+
+
+def test_intrinsic_value_is_what_the_option_is_worth_at_expiry():
+    assert intrinsic_value(call(), 153.0) == pytest.approx(3.0)
+    assert intrinsic_value(call(), 147.0) == 0.0
+    assert intrinsic_value(put(), 147.0) == pytest.approx(3.0)
+    assert intrinsic_value(put(), 153.0) == 0.0
+    assert intrinsic_value(Contract.equity("AAPL"), 153.0) == 0.0
+
+
+def test_a_worthless_option_closes_at_nothing():
+    fills = settlement_fills(call(), 1.0, 147.0, at=_EXPIRY)
+
+    assert len(fills) == 1
+    assert (fills[0].side, fills[0].price) == (SignalType.SELL, 0.0)
+
+
+def test_cash_settlement_closes_the_option_at_its_intrinsic_value():
+    fills = settlement_fills(call(), 2.0, 153.0, at=_EXPIRY)
+
+    assert len(fills) == 1
+    assert (fills[0].side, fills[0].quantity, fills[0].price) == (SignalType.SELL, 2.0, 3.0)
+
+
+def test_a_short_cash_settled_option_is_bought_back_at_intrinsic():
+    fills = settlement_fills(call(), -2.0, 153.0, at=_EXPIRY)
+
+    assert (fills[0].side, fills[0].quantity, fills[0].price) == (SignalType.BUY, 2.0, 3.0)
+
+
+def test_exercise_and_assignment_move_the_underlier_the_right_way():
+    def underlier_leg(contract, quantity):
+        fills = settlement_fills(contract, quantity, 153.0 if contract.right is Right.CALL else 147.0, at=_EXPIRY)
+        return fills[1].side, fills[1].quantity, fills[1].price
+
+    physical_call, physical_put = call(Settlement.PHYSICAL), put(Settlement.PHYSICAL)
+
+    assert underlier_leg(physical_call, 1.0) == (SignalType.BUY, 100.0, 150.0)    # holder buys
+    assert underlier_leg(physical_call, -1.0) == (SignalType.SELL, 100.0, 150.0)  # writer delivers
+    assert underlier_leg(physical_put, 1.0) == (SignalType.SELL, 100.0, 150.0)    # holder sells
+    assert underlier_leg(physical_put, -1.0) == (SignalType.BUY, 100.0, 150.0)    # writer takes
+
+
+def test_an_option_barely_in_the_money_is_abandoned_rather_than_exercised():
+    assert len(settlement_fills(call(Settlement.PHYSICAL), 1.0, 150.005, at=_EXPIRY)) == 1
+    assert len(settlement_fills(call(Settlement.PHYSICAL), 1.0, 150.02, at=_EXPIRY)) == 2
+
+
+def test_both_settlement_styles_leave_the_same_money_behind():
+    def settle(contract: Contract) -> float:
+        portfolio = BasicPortfolio(init_capital=100_000.0, contracts=ContractRegistry([contract]))
+        asyncio.run(portfolio.process_fill(Fill(
+            time_stamp=T0, symbol=contract.symbol, side=SignalType.BUY, quantity=1.0, price=2.0,
+        )))
+        for fill in settlement_fills(contract, 1.0, 153.0, at=_EXPIRY):
+            asyncio.run(portfolio.process_fill(fill))
+        portfolio.snapshot_equity(
+            time_stamp=_EXPIRY, prices={**portfolio.last_prices, "AAPL": 153.0}
+        )
+        return portfolio.current_equity
+
+    # Paid $200 for a call worth $300 at expiry, however it settles.
+    assert settle(call(Settlement.CASH)) == pytest.approx(100_100.0)
+    assert settle(call(Settlement.PHYSICAL)) == pytest.approx(100_100.0)
+
+
+def test_a_running_system_settles_a_position_once_its_expiry_has_passed():
+    contract = call(Settlement.CASH)
+    portfolio = BasicPortfolio(init_capital=100_000.0, contracts=ContractRegistry([contract]))
+    asyncio.run(portfolio.process_fill(Fill(
+        time_stamp=T0, symbol=OCC, side=SignalType.BUY, quantity=1.0, price=2.0,
+    )))
+    portfolio.mark("AAPL", 153.0, T0)
+
+    class Quiet(OrderBookStrategy):
+        def on_start(self) -> None: ...
+
+        def on_end(self) -> None: ...
+
+        def on_order_book(self, book, context=None):
+            return None
+
+    after_expiry = OrderBook(
+        time_stamp=datetime(2026, 1, 20, 14, 30), symbol="AAPL",
+        bids=(BookLevel(152.99, 100.0),), asks=(BookLevel(153.01, 100.0),),
+    )
+    asyncio.run(ExecutionSystem(
+        ListDataSource([after_expiry]), Quiet(),
+        portfolio=portfolio, risk_manager=RiskManager(),
+        broker=OrderBookSimBroker(maker_rebate_bps=0.0, taker_fee_bps=0.0, seed=1),
+        contracts=ContractRegistry([contract]),
+    ).run())
+
+    assert portfolio.open_qty_by_symbol.get(OCC, 0.0) == 0.0
+    assert portfolio.realised_pnl == pytest.approx(100.0)
+
+
+def test_a_contract_trades_its_whole_expiry_day_and_settles_after_the_close():
+    """
+    An option is live until the close on its expiry date, so the session belongs to the strategy.
+
+    Settling on the date alone took the whole day away: intraday, the first tick of expiry morning
+    converted every position to stock hours before the contract actually stopped trading.
+    """
+    contract = call(Settlement.PHYSICAL, strike=150.0)
+    registry = ContractRegistry([contract])
+    portfolio = BasicPortfolio(init_capital=100_000.0, contracts=registry)
+    asyncio.run(portfolio.process_fill(
+        Fill(time_stamp=datetime(2026, 1, 15, 20, 0), symbol=OCC,
+             side=SignalType.BUY, quantity=1.0, price=2.0)
+    ))
+
+    class Quiet(OrderBookStrategy):
+        def on_start(self) -> None: ...
+
+        def on_end(self) -> None: ...
+
+        def on_order_book(self, book, context=None): return None
+
+    def underlier(at: datetime) -> OrderBook:
+        return OrderBook(time_stamp=at, symbol="AAPL",
+                         bids=(BookLevel(152.99, 100.0),), asks=(BookLevel(153.01, 100.0),))
+
+    def run_until(at: datetime) -> None:
+        asyncio.run(ExecutionSystem(
+            ListDataSource([underlier(at)]), Quiet(),
+            portfolio=portfolio, risk_manager=RiskManager(),
+            broker=OrderBookSimBroker(maker_rebate_bps=0.0, taker_fee_bps=0.0, seed=1),
+            contracts=registry,
+        ).run())
+
+    run_until(datetime(2026, 1, 16, 14, 30))          # expiry morning
+    assert portfolio.open_qty_by_symbol[OCC] == 1.0, "settled before it stopped trading"
+
+    run_until(datetime(2026, 1, 16, 20, 59))          # a minute before the close
+    assert portfolio.open_qty_by_symbol[OCC] == 1.0
+
+    run_until(datetime(2026, 1, 16, 21, 0))           # exercised into stock
+    assert portfolio.open_qty_by_symbol.get(OCC, 0.0) == 0.0
+    assert portfolio.open_qty_by_symbol["AAPL"] == pytest.approx(100.0)
+
+
+# ----- A short put, start to finish ----- #
+
+PUT = "AAPL  260116P00150000"
+
+
+class PutSeller(OrderBookStrategy):
+    """Sells one put at the bid, once."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.sold = False
+        self.fills: list = []
+
+    def on_start(self) -> None: ...
+
+    def on_end(self) -> None: ...
+
+    def on_order_book(self, book, context=None):
+        if book.symbol != PUT or self.sold or book.best_bid is None:
+            return None
+        self.sold = True
+        return Signal(
+            time_stamp=book.time_stamp, symbol=PUT, signal_type=SignalType.SELL,
+            ref_price=book.best_bid.price, confidence=1.0, quantity=1.0,
+            limit_price=book.best_bid.price, liquidity=Liquidity.TAKER,
+        )
+
+    def on_fill(self, fill) -> None:
+        self.fills.append(fill)
+
+
+def _quote(symbol: str, at: datetime, bid: float, ask: float) -> OrderBook:
+    return OrderBook(
+        time_stamp=at, symbol=symbol,
+        bids=(BookLevel(bid, 50.0),), asks=(BookLevel(ask, 50.0),),
+    )
+
+
+def test_a_short_put_is_sold_assigned_and_accounted_end_to_end():
+    contract = Contract(
+        symbol=PUT, underlier="AAPL", multiplier=100.0, right=Right.PUT,
+        strike=150.0, expiry=date(2026, 1, 16), settlement=Settlement.PHYSICAL,
+    )
+    registry = ContractRegistry([contract])
+    portfolio = BasicPortfolio(init_capital=100_000.0, contracts=registry)
+    strategy = PutSeller()
+
+    opened = datetime(2026, 1, 2, 14, 30)
+    expired = datetime(2026, 1, 20, 14, 30)
+    stream = [
+        _quote("AAPL", opened, 152.0, 152.02),
+        _quote(PUT, opened, 3.00, 3.10),
+        _quote("AAPL", expired, 147.0, 147.02),
+    ]
+
+    asyncio.run(ExecutionSystem(
+        ListDataSource(stream), strategy,
+        portfolio=portfolio, risk_manager=RiskManager(),
+        broker=OrderBookSimBroker(maker_rebate_bps=0.0, taker_fee_bps=0.0, seed=1),
+        contracts=registry,
+    ).run())
+
+    # Sold the put for $300, was assigned 100 shares at the $150 strike, and holds them at $147.
+    assert strategy.fills[0].price == pytest.approx(3.00)
+    assert portfolio.open_qty_by_symbol.get(PUT, 0.0) == 0.0
+    assert portfolio.open_qty_by_symbol["AAPL"] == pytest.approx(100.0)
+    assert portfolio.cash_balance == pytest.approx(85_300.0)
+    assert portfolio.realised_pnl == pytest.approx(300.0)
+
+    portfolio.snapshot_equity(time_stamp=expired, prices={"AAPL": 147.0})
+    # Premium received exactly offsets the loss on the assigned stock.
+    assert portfolio.current_equity == pytest.approx(100_000.0)

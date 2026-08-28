@@ -298,6 +298,19 @@ empty registry behaves exactly as no registry at all and only what is *not* a sh
 infers either — `Contract.from_occ(symbol)` reads the 21-character US option form when you call it, and nothing
 calls it for you. A symbol means what it was registered as, not what its shape suggests.
 
+At expiry a position settles rather than sitting at its last mark forever. `ExecutionSystem` settles once each
+event has been marked and its fills applied, so a position is current and worth what the underlier is worth now.
+A contract trades until `settlement_time` on its expiry date (21:00 by default, the New York close in the data's own
+timezone), so the expiry session still belongs to the strategy; a date that has passed settles it regardless, for
+data that stops before the close.
+
+`settlement_fills(contract, quantity, underlier_price)`
+says what that means: cash settlement closes the option at its intrinsic value, physical settlement converts it —
+the option closes at nothing and the underlier trades at the strike, which is what exercise and assignment do.
+A call puts stock in the holder's hands and takes it from the writer; a put does the reverse. Anything not in the
+money by `EXERCISE_THRESHOLD` is abandoned, as the OCC abandons it. Settlement arrives as fills, so it is
+accounted, journalled and reported to the strategy exactly as a broker execution is.
+
 `ExecutionSystem(..., contracts=...)` passes it to `RiskContext.contracts` and to `StrategyContext.contract`, which
 is the contract for that event's symbol. `BasicPortfolio(..., contracts=...)` takes it too, because the multiplier
 is where a price becomes money: one contract at $5.00 costs $500, not $5. Everything that turns a price into an
