@@ -1,4 +1,5 @@
-from . import metadata_keys
+from . import blackscholes, metadata_keys
+from .blackscholes import Greeks
 from .contracts import (
     Contract,
     ContractRegistry,
@@ -7,6 +8,7 @@ from .contracts import (
     intrinsic_value,
     settlement_fills,
 )
+from .volatility import Smile, VolSurface
 from .types import (
     BacktestKPMs,
     Bar,
@@ -26,7 +28,11 @@ from .types import (
 )
 
 __all__ = [
+    "blackscholes",
     "metadata_keys",
+    "Greeks",
+    "Smile",
+    "VolSurface",
     "Contract",
     "ContractRegistry",
     "Right",

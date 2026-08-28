@@ -308,6 +308,24 @@ The registry is what a live run is routed by. Pass one to `Backtester` (or `Back
 the portfolio, the risk context, the data source and the broker together, which is what a strategy needs to run
 unchanged from a backtest to a venue.
 
+### 2.9 Volatility
+`core.blackscholes` prices a `Contract` and differentiates it: `price`, `greeks` (delta, gamma, vega, theta, rho,
+in the units a chain quotes them — vega per vol point, theta per day) and `implied_volatility`, which inverts a
+quote by bisection because vega collapses on the wings where most of a chain lives. Carry is a parameter rather
+than an assumption: quoted vols are struck against the prevailing rate, so pricing without one misprices every
+contract in the same direction.
+
+`core.volatility.VolSurface` is implied vol by log-moneyness and tenor, read off a chain rather than assumed —
+`VolSurface.from_books(books, contracts=..., spot=..., at=...)` builds one from the quotes the system already
+receives. A single number cannot price a chain: the same underlier trades at a different vol by strike and by
+expiry, and that shape is most of what an option is worth. Strikes interpolate within an expiry; expiries
+interpolate in *total variance*, which is what stops a near expiry and a far one implying a negative variance for
+the stretch between them. Outside the quoted range the nearest value is held rather than extrapolated.
+
+Built from real NSE NIFTY settlement prices it recovers the expected equity smile (a 12.9% floor at the money
+against 30% on the downside wing) and the expected event response: the index rose 5.45% on 2019-09-20 and
+at-the-money vol went from 14.7% to 31.4%, decaying back over the following five weeks.
+
 `settlement_fills(contract, quantity, underlier_price)`
 says what that means: cash settlement closes the option at its intrinsic value, physical settlement converts it —
 the option closes at nothing and the underlier trades at the strike, which is what exercise and assignment do.
