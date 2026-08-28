@@ -1,5 +1,6 @@
 from ghosalquant.data_layer.parquet_polygon_datasource import ParquetPolygonDataSource
 from ghosalquant.data_layer.yfinance_multi_datasource import YFinanceMultiDataSource
+from ghosalquant.data_layer.live_alpaca_datasource import LiveAlpacaDataSource
 from ghosalquant.data_layer.live_ibkr_datasource import LiveIBKRDataSource
 from ghosalquant.core.contracts import ContractRegistry
 from ghosalquant.util.config import Config, ConfigError, DataSrcType
@@ -21,6 +22,16 @@ def datasource_from_config(cfg: Config, *, contracts: ContractRegistry | None = 
             assert cfg.data.polygon is not None
             _require_bars_only(events, "polygon")
             return ParquetPolygonDataSource(cfg)
+        case DataSrcType.LIVE_ALPACA:
+            if cfg.data.alpaca is None:
+                raise ValueError("DATA.alpaca configuration is missing.")
+            return LiveAlpacaDataSource(
+                api_key=cfg.data.alpaca.api_key,
+                api_secret=cfg.data.alpaca.api_secret,
+                symbols=cfg.system.symbols,
+                events=events,
+                feed=cfg.data.alpaca.feed,
+            )
         case DataSrcType.LIVE_IBKR:
             if cfg.data.live_ibkr is None:
                 raise ValueError("DATA.live_ibkr configuration is missing.")

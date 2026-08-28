@@ -1,11 +1,16 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+import pytest
+
 from ghosalquant.data_layer.datasource_factory import datasource_from_config
+from ghosalquant.data_layer.live_alpaca_datasource import LiveAlpacaDataSource
 from ghosalquant.data_layer.live_ibkr_datasource import LiveIBKRDataSource
 from ghosalquant.util.config import (
     load_config,
     Config,
+    ConfigError,
+    DataSrcType,
     SystemConfig,
     TimeConfig,
     BrokerType,
@@ -153,3 +158,90 @@ RISK:
     assert data_src.port == 4002
     assert data_src.client_id == 7
     assert data_src.bar_resolution_sec == 5
+
+
+# ----- Alpaca ----- #
+
+def _alpaca_yaml(block: str) -> str:
+    return f"""
+SYSTEM:
+  symbols: ["AAPL", "MSFT"]
+  main_timeframe: "1Min"
+  execution_timeframe: "1Min"
+  fresh_candles: false
+  use_risk_manager: false
+DATA:
+  source: "live_alpaca"
+  events: ["order_books", "trades"]
+{block}
+TIME_RANGE:
+  start_date: "2024-01-01"
+  end_date: "2024-01-31"
+  session_start_time: "09:00"
+  session_end_time: "17:00"
+RISK:
+  rules: []
+"""
+
+
+def _load(yaml_text: str):
+    with TemporaryDirectory() as tmp_dir:
+        cfg_path = Path(tmp_dir) / "config.yaml"
+        cfg_path.write_text(yaml_text)
+        return load_config(cfg_path)
+
+
+def test_load_config_parses_the_alpaca_block():
+    config = _load(_alpaca_yaml("""  alpaca:
+    api_key: "PKTEST"
+    api_secret: "shhh"
+    endpoint: "https://api.alpaca.markets"
+    feed: "sip\""""))
+
+    assert config.data.source is DataSrcType.LIVE_ALPACA
+    assert config.data.alpaca is not None
+    assert (config.data.alpaca.api_key, config.data.alpaca.api_secret) == ("PKTEST", "shhh")
+    assert config.data.alpaca.feed == "sip"
+    assert config.data.alpaca.is_paper is False, "that endpoint places real orders"
+    assert config.data.alpaca.is_option_feed is False
+
+
+def test_alpaca_credentials_can_come_from_the_environment(monkeypatch):
+    """A key written into a config file gets committed sooner or later."""
+    monkeypatch.setenv("ALPACA_API_KEY", "PKENV")
+    monkeypatch.setenv("ALPACA_API_SECRET", "envsecret")
+
+    config = _load(_alpaca_yaml("  alpaca: {}"))
+
+    assert (config.data.alpaca.api_key, config.data.alpaca.api_secret) == ("PKENV", "envsecret")
+    # Nothing said otherwise, so it points at paper rather than at real money.
+    assert config.data.alpaca.is_paper is True
+    assert config.data.alpaca.feed == "iex"
+
+
+def test_alpaca_without_credentials_anywhere_is_refused(monkeypatch):
+    monkeypatch.delenv("ALPACA_API_KEY", raising=False)
+    monkeypatch.delenv("ALPACA_API_SECRET", raising=False)
+
+    with pytest.raises(ConfigError, match="ALPACA_API_KEY"):
+        _load(_alpaca_yaml("  alpaca: {}"))
+
+
+def test_an_option_feed_is_recognised_and_a_made_up_one_is_not(monkeypatch):
+    monkeypatch.setenv("ALPACA_API_KEY", "k")
+    monkeypatch.setenv("ALPACA_API_SECRET", "s")
+
+    assert _load(_alpaca_yaml('  alpaca:\n    feed: "opra"')).data.alpaca.is_option_feed is True
+    with pytest.raises(ConfigError, match="feed must be one of"):
+        _load(_alpaca_yaml('  alpaca:\n    feed: "nonsense"'))
+
+
+def test_datasource_from_config_builds_an_alpaca_source(monkeypatch):
+    monkeypatch.setenv("ALPACA_API_KEY", "k")
+    monkeypatch.setenv("ALPACA_API_SECRET", "s")
+    source = datasource_from_config(_load(_alpaca_yaml("  alpaca: {}")))
+
+    assert isinstance(source, LiveAlpacaDataSource)
+    assert source.symbols == ("AAPL", "MSFT")
+    assert source.events == ("order_books", "trades")
+    assert source.feed == "iex"

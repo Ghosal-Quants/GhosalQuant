@@ -1,3 +1,4 @@
+import os
 from dataclasses import dataclass
 from datetime import date, time, datetime
 from enum import Enum
@@ -38,6 +39,45 @@ class PolygonConfig:
     parquet_path: str
     base_resolution: str = "1Min" # The resolution of the underlying data
 
+# "iex" is what a free account gets; "sip" is the full consolidated tape. The option feeds
+# stream quotes and trades but no bars.
+ALPACA_STOCK_FEEDS = ("iex", "sip", "delayed_sip")
+ALPACA_OPTION_FEEDS = ("indicative", "opra")
+
+
+@dataclass(frozen=True, slots=True)
+class AlpacaConfig:
+    """
+    Credentials and endpoints for Alpaca.
+
+    ``endpoint`` is the trading REST base — paper by default, because the live one places real
+    orders and the two differ only by a hostname. ``feed`` picks both the data quality and the
+    market: the stock feeds stream equities, the option feeds stream contracts.
+    """
+
+    api_key: str
+    api_secret: str
+    endpoint: str = "https://paper-api.alpaca.markets"
+    feed: str = "iex"
+
+    def __post_init__(self) -> None:
+        if not self.api_key or not self.api_secret:
+            raise ConfigError("DATA.alpaca needs api_key and api_secret")
+        if self.feed not in ALPACA_STOCK_FEEDS + ALPACA_OPTION_FEEDS:
+            raise ConfigError(
+                f"DATA.alpaca.feed must be one of "
+                f"{ALPACA_STOCK_FEEDS + ALPACA_OPTION_FEEDS}. Got: {self.feed}"
+            )
+
+    @property
+    def is_option_feed(self) -> bool:
+        return self.feed in ALPACA_OPTION_FEEDS
+
+    @property
+    def is_paper(self) -> bool:
+        return "paper" in self.endpoint
+
+
 @dataclass(frozen=True, slots=True)
 class LiveIBKRConfig:
     host: str = "127.0.0.1"
@@ -56,6 +96,7 @@ class DataSrcType(str, Enum):
     YFINANCE = 'yfinance'
     LIVE_IBKR = 'live_ibkr'
     POLYGON = 'polygon'
+    LIVE_ALPACA = 'live_alpaca'
 
 MARKET_EVENT_KINDS = ("bars", "order_books", "trades")
 
@@ -66,6 +107,7 @@ class DataConfig:
     yfinance: YFinanceConfig | None = None
     polygon: PolygonConfig | None = None
     live_ibkr: LiveIBKRConfig | None = None
+    alpaca: AlpacaConfig | None = None
     events: tuple[str, ...] = ("bars",)
 
 @dataclass(frozen=True, slots=True)
@@ -202,6 +244,29 @@ def _parse_live_ibkr_config(raw: Any) -> LiveIBKRConfig:
     )
 
 
+def _parse_alpaca_config(raw: Any) -> AlpacaConfig:
+    """
+    Read the Alpaca block, letting the environment supply the credentials.
+
+    A key in a config file gets committed sooner or later, so ``ALPACA_API_KEY`` and
+    ``ALPACA_API_SECRET`` are read whenever the file leaves them out.
+    """
+    alpaca_raw = _assert_map(raw, "DATA.alpaca")
+    key = str(alpaca_raw.get("api_key") or os.environ.get("ALPACA_API_KEY", "")).strip()
+    secret = str(alpaca_raw.get("api_secret") or os.environ.get("ALPACA_API_SECRET", "")).strip()
+    if not key or not secret:
+        raise ConfigError(
+            "DATA.alpaca needs api_key and api_secret, in the config or as ALPACA_API_KEY and "
+            "ALPACA_API_SECRET in the environment."
+        )
+    return AlpacaConfig(
+        api_key=key,
+        api_secret=secret,
+        endpoint=str(alpaca_raw.get("endpoint", "https://paper-api.alpaca.markets")).strip(),
+        feed=str(alpaca_raw.get("feed", "iex")).strip().lower(),
+    )
+
+
 def _parse_event_kinds(raw: Any) -> tuple[str, ...]:
     if raw is None:
         return ("bars",)
@@ -298,12 +363,15 @@ def load_config(file_path: str | Path) -> Config:
             data_source = DataSrcType.POLYGON
         elif data_source_str == "live_ibkr":
             data_source = DataSrcType.LIVE_IBKR
+        elif data_source_str == "live_alpaca":
+            data_source = DataSrcType.LIVE_ALPACA
         else:
             raise ConfigError(f"DATA.source must be one of {[str(e) for e in DataSrcType]}. Got: {data_source_str}")
 
         yfinance_cfg: YFinanceConfig | None = None
         polygon_cfg: PolygonConfig | None = None
         live_ibkr_cfg: LiveIBKRConfig | None = None
+        alpaca_cfg: AlpacaConfig | None = None
 
         if data_source == DataSrcType.YFINANCE: # TODO: Add yfinance config options in the future if needed
             yf_raw = data_raw.get("yfinance", {}) or {}
@@ -325,12 +393,15 @@ def load_config(file_path: str | Path) -> Config:
         elif data_source == DataSrcType.LIVE_IBKR:
             live_ibkr_raw = data_raw.get("live_ibkr", {}) or {}
             live_ibkr_cfg = _parse_live_ibkr_config(live_ibkr_raw)
+        elif data_source == DataSrcType.LIVE_ALPACA:
+            alpaca_cfg = _parse_alpaca_config(data_raw.get("alpaca", {}) or {})
 
         data_config = DataConfig(
             source=data_source,
             yfinance=yfinance_cfg,
             polygon=polygon_cfg,
             live_ibkr=live_ibkr_cfg,
+            alpaca=alpaca_cfg,
             events=_parse_event_kinds(data_raw.get("events")),
         )
 
