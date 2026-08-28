@@ -830,6 +830,11 @@ comparing against `open_order_views` and the account's executions, and getting i
 `IBKRBroker` from a `BrokerConfig` dataclass.
 
 ## 10 Configuration
+Credentials come from the environment and nowhere else. `load_config` loads a `.env` first (the one beside the
+config, else the nearest above the working directory) without overriding anything already set, so a real environment
+still wins. `POLYGON_API_KEY`, `ALPACA_API_KEY` and `ALPACA_API_SECRET` are the variables; `.env.example` lists
+every variable the code reads and `.env` is gitignored. A key written into the config file is *refused* rather than
+ignored — ignoring it would leave the key sitting in a file that gets committed sooner or later.
 The system can be configured with a `Config` dataclass, created from a `config.yaml` file and parsed by
 `ghosalquant.util.config.load_config`.
 

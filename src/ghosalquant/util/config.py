@@ -4,6 +4,7 @@ from datetime import date, time, datetime
 from enum import Enum
 from typing import Any
 import yaml
+from dotenv import find_dotenv, load_dotenv
 from pathlib import Path
 
 ALLOWED_TFS = {"1Min", "5Min", "15Min", "30Min", "1H", "2H", "4H", "1D", "1W", "1M"}
@@ -244,24 +245,33 @@ def _parse_live_ibkr_config(raw: Any) -> LiveIBKRConfig:
     )
 
 
-def _parse_alpaca_config(raw: Any) -> AlpacaConfig:
+def _secret(raw: dict, field: str, variable: str, where: str) -> str:
     """
-    Read the Alpaca block, letting the environment supply the credentials.
+    A credential, from the environment and nowhere else.
 
-    A key in a config file gets committed sooner or later, so ``ALPACA_API_KEY`` and
-    ``ALPACA_API_SECRET`` are read whenever the file leaves them out.
+    Config files get committed; ``.env`` does not. One found in the config is refused rather than
+    ignored, because ignoring it would leave the key sitting in the file it should never have
+    been written to.
     """
-    alpaca_raw = _assert_map(raw, "DATA.alpaca")
-    key = str(alpaca_raw.get("api_key") or os.environ.get("ALPACA_API_KEY", "")).strip()
-    secret = str(alpaca_raw.get("api_secret") or os.environ.get("ALPACA_API_SECRET", "")).strip()
-    if not key or not secret:
+    if raw.get(field) is not None:
         raise ConfigError(
-            "DATA.alpaca needs api_key and api_secret, in the config or as ALPACA_API_KEY and "
-            "ALPACA_API_SECRET in the environment."
+            f"{where}.{field} must not be in the config file. Move it to {variable} in .env "
+            "(see .env.example) and delete it from here."
         )
+    value = os.environ.get(variable, "").strip()
+    if not value:
+        raise ConfigError(
+            f"{variable} is required in the environment for {where}. See .env.example."
+        )
+    return value
+
+
+def _parse_alpaca_config(raw: Any) -> AlpacaConfig:
+    """Read the Alpaca block, letting the environment supply the credentials."""
+    alpaca_raw = _assert_map(raw, "DATA.alpaca")
     return AlpacaConfig(
-        api_key=key,
-        api_secret=secret,
+        api_key=_secret(alpaca_raw, "api_key", "ALPACA_API_KEY", "DATA.alpaca"),
+        api_secret=_secret(alpaca_raw, "api_secret", "ALPACA_API_SECRET", "DATA.alpaca"),
         endpoint=str(alpaca_raw.get("endpoint", "https://paper-api.alpaca.markets")).strip(),
         feed=str(alpaca_raw.get("feed", "iex")).strip().lower(),
     )
@@ -322,8 +332,18 @@ def _parse_broker_config(raw: Any) -> BrokerConfig:
 
 # Config loader
 def load_config(file_path: str | Path) -> Config:
-    """Loads and parses user's config file"""
+    """
+    Loads and parses user's config file.
+
+    A ``.env`` is read first so credentials can live there instead of in the config: the one
+    beside the config file if there is one, else the nearest above the working directory. It
+    never overrides a variable already set, so a real environment still wins.
+    """
     file_path: Path = Path(file_path).resolve()
+    beside = file_path.parent / ".env"
+    # find_dotenv searches from this module by default, which inside an installed package is
+    # nowhere near the user's project.
+    load_dotenv(beside if beside.is_file() else find_dotenv(usecwd=True))
 
     # Open the config file
     try:
@@ -381,7 +401,7 @@ def load_config(file_path: str | Path) -> Config:
         elif data_source == DataSrcType.POLYGON:
             polygon_raw = _assert_map(data_raw.get("polygon"), "DATA.polygon")
 
-            api_key = _assert_str(polygon_raw.get("api_key"), "DATA.polygon.api_key")
+            api_key = _secret(polygon_raw, "api_key", "POLYGON_API_KEY", "DATA.polygon")
             parquet_path = _assert_str(polygon_raw.get("parquet_path"), "DATA.polygon.parquet_path")
             base_res = _validate_tf(str(polygon_raw.get("base_resolution", "1Min")), "DATA.polygon.base_resolution")
 

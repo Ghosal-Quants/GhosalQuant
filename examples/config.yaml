@@ -27,17 +27,15 @@ DATA:
   events: ["bars"]
   # Only the section specified in the "source" field will be used. The other section will be ignored.
   polygon:
-    api_key: "API_KEY"
+    # api_key is not accepted here: it comes from POLYGON_API_KEY in .env. See .env.example.
     parquet_path: "src/ghosalquant/data_layer/data/main.parquet"
     base_resolution: "1Min"
   yfinance: {} # Currently no config options for yfinance, but this section may be expanded in future
   # To switch to Alpaca live market data, change `source` to `live_alpaca` and use the block
   # below. Needs the optional SDK: pip install "ghosalquant[alpaca]"
   # alpaca:
-  #   # Left out here, api_key and api_secret are read from ALPACA_API_KEY and ALPACA_API_SECRET,
-  #   # which is where credentials belong rather than in a file that gets committed.
-  #   api_key: "PK..."
-  #   api_secret: "..."
+  #   # api_key and api_secret are not accepted here: they come from ALPACA_API_KEY and
+  #   # ALPACA_API_SECRET in .env. See .env.example.
   #   endpoint: "https://paper-api.alpaca.markets"   # paper; drop the "paper-" for real money
   #   feed: "iex"        # iex (free) | sip | delayed_sip, or opra | indicative for options
   #   # DATA.events: "order_books" is Alpaca's quote channel, which is top of book only, so a
