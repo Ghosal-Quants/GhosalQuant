@@ -233,12 +233,16 @@ def test_alpaca_credentials_can_come_from_the_environment(monkeypatch):
     assert config.data.alpaca.feed == "iex"
 
 
-def test_alpaca_without_credentials_anywhere_is_refused(monkeypatch):
+def test_alpaca_without_credentials_anywhere_is_refused(tmp_path, monkeypatch):
     monkeypatch.delenv("ALPACA_API_KEY", raising=False)
     monkeypatch.delenv("ALPACA_API_SECRET", raising=False)
+    # An empty .env beside the config, so a real one further up cannot answer for it.
+    (tmp_path / ".env").write_text("")
+    cfg_path = tmp_path / "config.yaml"
+    cfg_path.write_text(_alpaca_yaml("  alpaca: {}"))
 
     with pytest.raises(ConfigError, match="ALPACA_API_KEY is required"):
-        _load(_alpaca_yaml("  alpaca: {}"))
+        load_config(cfg_path)
 
 
 def test_an_option_feed_is_recognised_and_a_made_up_one_is_not(monkeypatch):
@@ -385,7 +389,6 @@ def test_the_static_settings_default_without_a_block():
     assert static.agg_timespan == "minute"
     assert static.start_lookback_days == 731
     assert static.main_parquet.endswith("main.parquet")
-    # Beside the code, not the working directory.
     assert Path(static.main_parquet).is_absolute()
 
 
