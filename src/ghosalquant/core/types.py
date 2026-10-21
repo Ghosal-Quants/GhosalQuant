@@ -331,6 +331,15 @@ class Fill:
 
 
 @dataclass(frozen=True, slots=True)
+class CashFlow:
+    """Money a venue books on a position without a trade, such as funding. A charge is negative."""
+    time_stamp: datetime
+    symbol: str
+    amount: float
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
 class OpenOrderView:
     """
     What a strategy or risk rule is allowed to know about one of its own resting orders.

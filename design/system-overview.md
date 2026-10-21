@@ -138,7 +138,8 @@ A `DataSource` yields `MarketEvent`s: `Bar`s, `OrderBook`s, and `PublicTrade`s i
    every time; books and prints snapshot at most once per `snapshot_interval` (and whenever a fill changed the
    accounting), so a high-frequency book feed does not bloat the equity curve.
 3. Records the bar close in `price_history` (bars only — the risk rules read it as a bar series).
-4. Drains any new `Fill`s from the `Broker`, feeds them into the `Portfolio`, and calls `Strategy.on_fill`.
+4. Drains any new `Fill`s from the `Broker`, feeds them into the `Portfolio`, and calls `Strategy.on_fill`; then
+   feeds it the broker's `CashFlow`s.
 5. Dispatches the event to `on_market_data(bar)`, `on_order_book(book, context)`, or `on_public_trade(trade, context)`
    and passes each resulting `Signal` through the sinks and the `RiskManager`; accepted orders are reported back
    through `Strategy.on_order_accepted(order, broker_order_id)`.
@@ -212,6 +213,8 @@ class Fill:
     broker_order_id: str | None = None
     commission: float | None = None
 ```
+A `CashFlow(time_stamp, symbol, amount, reason)` is money a venue books on a position without a trade, such as
+funding or a dividend. A charge is negative.
 
 ### 2.5 Trade
 Trades are created and managed within a `Portfolio` implementation. A `BUY` fill opens a trade; a `SELL` fill closes
@@ -651,6 +654,7 @@ Portfolio management is defined by the `Portfolio` protocol from `ghosalquant.po
 ```python
 class Portfolio(Protocol):
     async def process_fill(self, fill: Fill) -> None: ...
+    async def process_cash_flow(self, flow: CashFlow) -> None: ...                 # realised P&L, not a fee
     def mark(self, symbol: str, price: float, time_stamp: datetime) -> None: ...   # records a price, no snapshot
     def update_equity(self, bar: Bar) -> None: ...                                  # mark + snapshot
     def snapshot_equity(self, time_stamp: datetime, prices: dict[str, float]) -> None: ...
@@ -745,6 +749,8 @@ class Broker(ABC):
 
     @abstractmethod
     def get_fills(self) -> list[Fill]: ...
+
+    def get_cash_flows(self) -> list[CashFlow]: ...   # Optional, none by default
 ```
 
 A broker may additionally implement the `OpenOrderQueries` protocol (`ghosalquant.brokerage.open_orders`) —

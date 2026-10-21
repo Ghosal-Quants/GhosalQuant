@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Iterable, Mapping
 
 from ..core.contracts import ContractRegistry
-from ..core.types import Trade, EquityPoint, Fill, SignalType, Bar
+from ..core.types import Trade, EquityPoint, Fill, SignalType, Bar, CashFlow
 from ..portfolio.portfolio_base import Portfolio
 
 _EPS = 1e-12
@@ -23,6 +23,7 @@ class BasicPortfolio(Portfolio):
         self._cash: float = init_capital
 
         self._fees_paid: float = 0.0
+        self._cash_flows: float = 0.0
 
         # Symbol -> Trade ID -> Trade
         self._open_trades: dict[str, dict[int, Trade]] = {}
@@ -103,6 +104,16 @@ class BasicPortfolio(Portfolio):
             time_stamp=fill.time_stamp,
             prices=self._last_prices
         )
+
+    async def process_cash_flow(self, flow: CashFlow) -> None:
+        """Book cash a venue paid or charged on a position: realised P&L, not a fee."""
+        if abs(flow.amount) <= _EPS:
+            return
+        self._cash += flow.amount
+        self._cash_flows += flow.amount
+        self._realised_pnl += flow.amount
+        self._accounting_version += 1
+        self.snapshot_equity(time_stamp=flow.time_stamp, prices=self._last_prices)
 
     def mark(self, symbol: str, price: float, time_stamp: datetime) -> None:
         self._last_prices[symbol] = float(price)
@@ -208,6 +219,11 @@ class BasicPortfolio(Portfolio):
     @property
     def fees_paid(self) -> float:
         return self._fees_paid
+
+    @property
+    def cash_flows(self) -> float:
+        """Net cash flows booked, received less charged."""
+        return self._cash_flows
 
     @property
     def accounting_version(self) -> int:

@@ -4,7 +4,7 @@ import sys
 from datetime import date, datetime, time, timedelta
 
 from ..core.contracts import ContractRegistry, settlement_fills
-from ..core.types import Bar, Fill, MarketEvent, OpenOrderView, Order, OrderBook, PublicTrade, Signal
+from ..core.types import Bar, CashFlow, Fill, MarketEvent, OpenOrderView, Order, OrderBook, PublicTrade, Signal
 from ..data_layer.datasource_base import DataSource
 from ..execution.context import StrategyContext
 from ..execution.strategy_base import Strategy, as_signal_list
@@ -118,6 +118,7 @@ class ExecutionSystem:
                 # Collect fills from the broker and pass to portfolio
                 if self.broker and self.portfolio:
                     await self._apply_fills(self.broker.get_fills())
+                    await self._apply_cash_flows(self.broker.get_cash_flows())
 
                 # Settle last: the position and the underlier price both have to be current.
                 if self.portfolio:
@@ -171,6 +172,20 @@ class ExecutionSystem:
             await self.portfolio.process_fill(fill)
             self._note_snapshot(fill.time_stamp)
             self._call_hook("on_fill", fill)
+        if self.journal is not None:
+            self.journal.commit()
+
+    async def _apply_cash_flows(self, flows: list[CashFlow]) -> None:
+        """Book the broker's cash flows as ``_apply_fills`` applies fills, journalled first."""
+        if not flows:
+            return
+        for flow in flows:
+            if self.journal is not None and not self.journal.record(
+                "cash_flow", _cash_flow_payload(flow), observed_at=flow.time_stamp
+            ):
+                continue
+            await self.portfolio.process_cash_flow(flow)
+            self._note_snapshot(flow.time_stamp)
         if self.journal is not None:
             self.journal.commit()
 
@@ -409,6 +424,15 @@ class ExecutionSystem:
             open_orders=self._open_order_views(),
             contracts=self.contracts,
         )
+
+
+def _cash_flow_payload(flow: CashFlow) -> dict:
+    return {
+        "time_stamp": flow.time_stamp.isoformat(),
+        "symbol": flow.symbol,
+        "amount": float(flow.amount),
+        "reason": flow.reason,
+    }
 
 
 def _fill_payload(fill: Fill) -> dict:

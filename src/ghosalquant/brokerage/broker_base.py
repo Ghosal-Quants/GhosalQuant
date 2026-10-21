@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from datetime import datetime
 
-from ..core.types import Bar, Fill, MarketEvent, Order, OrderBook, PublicTrade
+from ..core.types import Bar, CashFlow, Fill, MarketEvent, Order, OrderBook, PublicTrade
 
 class Broker(ABC):
     # ----- Managing Connection ----- #
@@ -89,3 +89,7 @@ class Broker(ABC):
         Implementations should return a possibly empty list, and drain any internal fill queue
         """
         ...
+
+    def get_cash_flows(self) -> list[CashFlow]:
+        """Cash flows booked since the last call, such as funding on an open future."""
+        return []

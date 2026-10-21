@@ -1,11 +1,14 @@
 from datetime import datetime
 from typing import Protocol, Iterable
 
-from ..core.types import Trade, EquityPoint, Fill, Bar
+from ..core.types import Trade, EquityPoint, Fill, Bar, CashFlow
 
 
 class Portfolio(Protocol):
     async def process_fill(self, fill: Fill) -> None:
+        ...
+
+    async def process_cash_flow(self, flow: CashFlow) -> None:
         ...
 
     def mark(self, symbol: str, price: float, time_stamp: datetime) -> None:

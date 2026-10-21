@@ -6,7 +6,7 @@ from ghosalquant.portfolio.basic_portfolio import BasicPortfolio
 from ghosalquant.brokerage.simulated import SimBroker
 from ghosalquant.execution.execution_system import ExecutionSystem
 from examples.example_strategy import ExampleStrategy
-from ghosalquant.core.types import SignalType, Signal, Bar, Order
+from ghosalquant.core.types import SignalType, Signal, Bar, CashFlow, Order
 from ghosalquant.execution.sinks import ListSink
 from ghosalquant.risk.risk_manager import RiskManager
 from ghosalquant.risk.rules.rule_max_open_positions import MaxOpenPositions
@@ -310,3 +310,58 @@ def test_execution_builds_risk_context_from_portfolio_and_price_history():
     assert second_context.price_history == {"TEST": [100.0, 100.0, 80.0]}
     assert second_context.current_drawdown is not None
     assert abs(second_context.current_drawdown - (-0.1)) < 1e-12
+
+
+class FundedSimBroker(SimBroker):
+    """Charges 0.5 a unit held as funding on every bar after the fill."""
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.held = 0.0
+        self.flows: list[CashFlow] = []
+
+    def on_bar(self, bar: Bar) -> None:
+        if self.held:
+            self.flows.append(CashFlow(bar.time_stamp, bar.symbol, -0.5 * self.held, "funding"))
+        super().on_bar(bar)
+
+    def get_fills(self):
+        fills = super().get_fills()
+        self.held += sum(fill.quantity for fill in fills)
+        return fills
+
+    def get_cash_flows(self) -> list[CashFlow]:
+        flows, self.flows = self.flows, []
+        return flows
+
+
+def test_venue_cash_flows_are_booked_as_realised_pnl():
+    bars = [
+        _bar("2025-11-15 09:00:00", symbol="TEST", open=100.0, high=100.0, low=100.0, close=100.0, volume=1000),
+        _bar("2025-11-15 09:05:00", symbol="TEST", open=100.0, high=100.0, low=100.0, close=100.0, volume=1000),
+        _bar("2025-11-15 09:10:00", symbol="TEST", open=100.0, high=100.0, low=100.0, close=100.0, volume=1000),
+        _bar("2025-11-15 09:15:00", symbol="TEST", open=100.0, high=100.0, low=100.0, close=100.0, volume=1000),
+    ]
+    broker = FundedSimBroker(
+        spread_bps=0.0,
+        slippage_mean_bps=0.0,
+        slippage_std_bps=0.0,
+        impact_bps_at_full_participation=0.0,
+        max_fill_pct_of_bar_volume=1.0,
+        seed=7,
+    )
+    portfolio = BasicPortfolio(init_capital=1_000.0)
+    execution = ExecutionSystem(
+        data_src=ListDataSource(bars=bars),
+        strategy=BuyOnBarsStrategy([0], quantity=2.0),
+        risk_manager=RiskManager(rules=[]),
+        portfolio=portfolio,
+        broker=broker,
+    )
+
+    asyncio.run(execution.run())
+
+    # Filled on the second bar, then charged on the third and fourth.
+    assert portfolio.cash_flows == -2.0
+    assert portfolio.realised_pnl == portfolio.cash_flows - portfolio.fees_paid
+    assert portfolio.current_equity == 1_000.0 - 2.0 - portfolio.fees_paid
