@@ -249,12 +249,14 @@ def test_mark_policies():
     assert mark_from_book(two_sided, previous_mark=None, position_quantity=5.0, policy=MarkPolicy.CONSERVATIVE) == 100.0
     assert mark_from_book(two_sided, previous_mark=None, position_quantity=-5.0, policy=MarkPolicy.CONSERVATIVE) == 101.0
     assert mark_from_book(two_sided, previous_mark=None, position_quantity=0.0, policy=MarkPolicy.CONSERVATIVE) == 100.5
+    assert mark_from_book(two_sided, previous_mark=99.0, position_quantity=5.0, policy=MarkPolicy.BARS) == 99.0
 
     print_ = _trade(0, 102.0)
     assert mark_from_trade(print_, previous_mark=100.0, position_quantity=5.0) == 102.0
     assert mark_from_trade(print_, previous_mark=100.0, position_quantity=5.0, policy=MarkPolicy.CONSERVATIVE) == 100.0
     assert mark_from_trade(_trade(0, 98.0), previous_mark=100.0, position_quantity=5.0, policy=MarkPolicy.CONSERVATIVE) == 98.0
     assert mark_from_trade(print_, previous_mark=None, position_quantity=5.0, policy=MarkPolicy.CONSERVATIVE) == 102.0
+    assert mark_from_trade(print_, previous_mark=100.0, position_quantity=5.0, policy=MarkPolicy.BARS) == 100.0
 
 
 def test_basic_portfolio_mark_does_not_snapshot_but_update_equity_does():

@@ -10,12 +10,14 @@ class MarkPolicy(str, Enum):
     ``MID``: the mid of a two-sided book; a print marks at its price.
     ``CONSERVATIVE``: the side that hurts — bid for longs, ask for shorts — and a print never
     improves a mark (never raises a long's mark, never lowers a short's).
+    ``BARS``: neither moves a mark; bars and fills alone do, for a venue that publishes its own.
 
-    Under both policies a one-sided or empty book keeps the previous mark: marking a long at the
+    Under every policy a one-sided or empty book keeps the previous mark: marking a long at the
     ask precisely when the bid has vanished is the wrong direction to be optimistic in.
     """
     MID = "mid"
     CONSERVATIVE = "conservative"
+    BARS = "bars"
 
 
 def mark_from_book(
@@ -26,7 +28,7 @@ def mark_from_book(
     policy: MarkPolicy = MarkPolicy.MID,
 ) -> float | None:
     """The mark implied by ``book``, or ``previous_mark`` when the book cannot provide one."""
-    if not book.is_two_sided():
+    if policy is MarkPolicy.BARS or not book.is_two_sided():
         return previous_mark
     if policy is MarkPolicy.MID:
         return book.mid_price
@@ -43,8 +45,10 @@ def mark_from_trade(
     previous_mark: float | None,
     position_quantity: float,
     policy: MarkPolicy = MarkPolicy.MID,
-) -> float:
+) -> float | None:
     """The mark implied by ``trade``."""
+    if policy is MarkPolicy.BARS:
+        return previous_mark
     if policy is MarkPolicy.MID or previous_mark is None:
         return float(trade.price)
     if position_quantity > 0.0:

@@ -136,7 +136,8 @@ A `DataSource` yields `MarketEvent`s: `Bar`s, `OrderBook`s, and `PublicTrade`s i
 2. Marks the `Portfolio` from the **raw** event: a bar's close, a two-sided book's mid (or bid/ask under
    `MarkPolicy.CONSERVATIVE`), or a print. A one-sided book leaves the previous mark in place. Bars snapshot equity
    every time; books and prints snapshot at most once per `snapshot_interval` (and whenever a fill changed the
-   accounting), so a high-frequency book feed does not bloat the equity curve.
+   accounting), so a high-frequency book feed does not bloat the equity curve. Under `MarkPolicy.BARS` only bars
+   mark, for a venue that publishes its own mark price.
 3. Records the bar close in `price_history` (bars only — the risk rules read it as a bar series).
 4. Drains any new `Fill`s from the `Broker`, feeds them into the `Portfolio`, and calls `Strategy.on_fill`; then
    feeds it the broker's `CashFlow`s.
@@ -699,7 +700,7 @@ The default implementation (`ghosalquant.portfolio.basic_portfolio`). Key behavi
 The applied-execution set is in memory. Across a restart the venue is the authority: `adopt` re-seeds positions
 from the account, and `ExecutionSystem`'s journal (§15.4) is what stops a fill being applied twice.
 
-`ghosalquant.portfolio.marks` holds the `MarkPolicy` (`MID` or `CONSERVATIVE`) and the `mark_from_book` /
+`ghosalquant.portfolio.marks` holds the `MarkPolicy` (`MID`, `CONSERVATIVE` or `BARS`) and the `mark_from_book` /
 `mark_from_trade` functions the loop uses.
 
 ### 8.2 Executable Valuation
