@@ -815,7 +815,8 @@ A queue-aware broker for L2 order books. Use it whenever the data source yields 
   `Fill.commission` while `taker_fee_bps` is charged. Both fee arguments are required.
 - Depth the broker consumes is withheld from the book returned by `on_order_book` until the venue
   redisplays it, so the same liquidity cannot be taken twice. `adjusted_book(book)` exposes that
-  view directly and `observe_unchanged_book(book)` records a book without re-running matching.
+  view directly and `observe_unchanged_book(book)` records a book without re-running matching. A
+  venue model that knows a level was requoted in full says so with `fill_model.redisplayed(...)`.
 
 ### 9.4 `IBKRBroker`
 A live broker implementation (`ghosalquant.brokerage.ibkr`) using `ib_insync` to connect to Interactive Brokers TWS

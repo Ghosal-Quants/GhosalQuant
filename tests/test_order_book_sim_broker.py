@@ -226,6 +226,17 @@ def test_taker_consumption_is_withheld_from_the_book_until_redisplayed():
     assert refreshed.best_ask.quantity == 14.0
 
 
+def test_a_level_the_venue_requotes_is_no_longer_withheld():
+    broker = _broker()
+    broker.on_order_book(_book(0, [(99.0, 5)], [(100.0, 10)]))
+    broker.submit(_order(0, SignalType.BUY, 4.0, 100.0, Liquidity.TAKER))
+    broker.get_fills()
+
+    # A venue model that knows the ask at 100.0 was requoted in full says so.
+    broker.fill_model.redisplayed("TEST", "ask", 100.0)
+    assert broker.on_order_book(_book(1, [(99.0, 5)], [(100.0, 6)])).best_ask.quantity == 6.0
+
+
 def test_maker_order_crossed_by_the_book_fills_at_its_own_limit():
     broker = _broker()
     broker.on_order_book(_book(0, [(100.0, 5)], [(101.0, 5)]))

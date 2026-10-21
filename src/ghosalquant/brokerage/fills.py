@@ -275,6 +275,10 @@ class QueueAwareFill:
         """Record a book without matching orders against it."""
         self._books[book.symbol] = book
 
+    def redisplayed(self, symbol: str, side: str, price: float) -> None:
+        """The venue requoted ``side`` ("bid"/"ask") at ``price`` in full: stop withholding it."""
+        self._forget((symbol, side, float(price)))
+
     def adjusted(self, book: OrderBook) -> OrderBook:
         bid_keys = self._consumed_keys.get((book.symbol, "bid"))
         ask_keys = self._consumed_keys.get((book.symbol, "ask"))
