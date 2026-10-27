@@ -1,6 +1,9 @@
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 
+import pytest
+
+from ghosalquant.bench.benchmark_trend_vol_target import BenchmarkTrendVolTarget
 from ghosalquant.data_layer.list_datasource import ListDataSource
 from ghosalquant.portfolio.basic_portfolio import BasicPortfolio
 from ghosalquant.brokerage.simulated import SimBroker
@@ -365,3 +368,61 @@ def test_venue_cash_flows_are_booked_as_realised_pnl():
     assert portfolio.cash_flows == -2.0
     assert portfolio.realised_pnl == portfolio.cash_flows - portfolio.fees_paid
     assert portfolio.current_equity == 1_000.0 - 2.0 - portfolio.fees_paid
+
+
+def test_benchmark_trend_vol_target_rejects_multi_symbol_stream():
+    strategy = BenchmarkTrendVolTarget()
+
+    first_bar = _bar(
+        "2025-11-15 09:00:00",
+        symbol="AAA",
+        open=100.0,
+        high=101.0,
+        low=99.0,
+        close=100.0,
+        volume=1000.0,
+    )
+    second_bar = _bar(
+        "2025-11-15 09:05:00",
+        symbol="BBB",
+        open=100.0,
+        high=101.0,
+        low=99.0,
+        close=100.5,
+        volume=1000.0,
+    )
+
+    assert strategy.on_market_data(first_bar) is None
+
+    with pytest.raises(ValueError, match="single-symbol only"):
+        strategy.on_market_data(second_bar)
+
+
+def test_benchmark_trend_vol_target_emits_target_weight_signal():
+    strategy = BenchmarkTrendVolTarget()
+    signal: Signal | None = None
+    warm_signals: list[Signal] = []
+    start_time = datetime.fromisoformat("2025-11-15 09:00:00")
+
+    for i in range(80):
+        close = 100.0 * (1.001 ** i)
+        bar = _bar(
+            (start_time + timedelta(minutes=i)).isoformat(sep=" "),
+            symbol="AAA",
+            open=close * 0.999,
+            high=close * 1.001,
+            low=close * 0.998,
+            close=close,
+            volume=1000.0,
+        )
+        next_signal = strategy.on_market_data(bar)
+        if next_signal is not None:
+            signal = next_signal
+            if i >= 70:
+                warm_signals.append(next_signal)
+
+    assert signal is not None
+    assert signal.quantity is None
+    assert signal.metadata is not None
+    assert signal.metadata["target_weight"] > 0.0
+    assert len(warm_signals) >= 5
