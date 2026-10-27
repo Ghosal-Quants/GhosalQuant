@@ -85,6 +85,10 @@ class CorrelationFilter(RiskRule):
             return True
 
         for held_sym in held_symbols:
+            # A symbol always correlates with itself.
+            if held_sym == draft.symbol:
+                continue
+
             held_window = self.window.of(context.price_history.get(held_sym))
             if held_window is None:
                 continue

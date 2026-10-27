@@ -356,6 +356,18 @@ def test_reclamation_gives_up_when_the_weaker_orders_cannot_fund_it():
     assert plan.reclaimed_notional == 0.0
 
 
+# ----- Adding to a held symbol opens nothing new ----- #
+
+def test_max_open_positions_lets_a_held_symbol_be_added_to():
+    rule = MaxOpenPositions(max_open_positions=1)
+    long_aapl = RiskContext(open_positions=1, open_qty_by_symbol={"AAPL": 10.0})
+    short_aapl = RiskContext(open_positions=1, open_qty_by_symbol={"AAPL": -10.0})
+
+    assert rule.apply(draft(symbol="AAPL"), long_aapl) is True
+    assert rule.apply(draft(symbol="AAPL"), short_aapl) is True
+    assert rule.apply(draft(symbol="MSFT"), long_aapl) is False
+
+
 # ----- Rules report through logging ----- #
 
 def test_a_blocked_order_is_logged_not_printed(capsys, caplog):
@@ -558,6 +570,16 @@ def test_a_sell_and_a_flat_book_are_outside_the_filter():
 
     assert rule.apply(draft(symbol="NEW", side=SignalType.SELL), context) is True
     assert rule.apply(draft(symbol="NEW"), RiskContext(price_history=_correlated_history(10))) is True
+
+
+def test_adding_to_a_held_symbol_is_not_blocked_by_its_correlation_with_itself():
+    rule = CorrelationFilter(lookback=5, threshold=0.75)
+    context = RiskContext(
+        open_qty_by_symbol={"AAPL": 10.0},
+        price_history={"AAPL": [100.0, 101.0, 102.0, 103.0, 104.0]},
+    )
+
+    assert rule.apply(draft(symbol="AAPL"), context) is True
 
 
 # ----- Sizing by the edge ----- #

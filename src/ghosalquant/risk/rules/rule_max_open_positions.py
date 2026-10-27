@@ -10,11 +10,18 @@ class MaxOpenPositions(RiskRule):
         self.max_open_positions = max_open_positions
 
     def apply(self, draft: OrderDraft, context: RiskContext) -> bool:
-        if (draft.side == SignalType.BUY) and (context.open_positions >= self.max_open_positions):
-                logger.info(
-                    "MaxOpenPositions blocked BUY %s: %d already open",
-                    draft.symbol, self.max_open_positions,
-                )
-                return False
-        else:
+        if draft.side != SignalType.BUY:
             return True
+
+        # A buy in a symbol already held, long or short, opens nothing new.
+        if context.open_qty_by_symbol.get(draft.symbol, 0.0) != 0.0:
+            return True
+
+        if context.open_positions >= self.max_open_positions:
+            logger.info(
+                "MaxOpenPositions blocked BUY %s: %d already open",
+                draft.symbol, self.max_open_positions,
+            )
+            return False
+
+        return True

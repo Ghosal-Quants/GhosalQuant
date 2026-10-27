@@ -297,7 +297,8 @@ def test_execution_builds_risk_context_from_portfolio_and_price_history():
     asyncio.run(execution.run())
 
     assert len(capture_rule.contexts) == 2
-    assert len(broker.submitted_orders) == 1
+    # The second buy adds to TEST, which is already held.
+    assert len(broker.submitted_orders) == 2
 
     first_context = capture_rule.contexts[0]
     assert first_context.open_positions == 0
