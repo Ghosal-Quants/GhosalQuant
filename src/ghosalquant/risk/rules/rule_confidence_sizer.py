@@ -1,5 +1,6 @@
 import logging
 
+from ...core import metadata_keys
 from ..types import RiskRule, OrderDraft, RiskContext
 
 logger = logging.getLogger(__name__)
@@ -18,6 +19,10 @@ class ConfidenceSizer(RiskRule):
         self.max_quantity = float(max_quantity)
 
     def apply(self, draft: OrderDraft, context: RiskContext) -> bool:
+        # Already sized from its target weight by RiskManager.
+        if draft.metadata.get(metadata_keys.TARGET_WEIGHT) is not None:
+            return draft.quantity is not None and draft.quantity > 0.0
+
         confidence: float = draft.metadata.get("confidence", 0.0)
 
         draft.quantity = float(lerp(self.min_quantity, self.max_quantity, confidence))

@@ -639,3 +639,60 @@ def test_sells_are_not_sized_by_it():
 
     assert rule.apply(exit_order, RiskContext(current_equity=100_000.0, contracts=CHAIN)) is True
     assert exit_order.quantity == 3.0
+
+
+# ----- Sizing to a target weight ----- #
+
+def _weighted(
+    weight: float, side: SignalType = SignalType.BUY, *, symbol: str = "AAPL", price: float = 100.0
+) -> Signal:
+    return Signal(
+        time_stamp=T0, symbol=symbol, signal_type=side, ref_price=price,
+        metadata={metadata_keys.TARGET_WEIGHT: weight},
+    )
+
+
+def test_a_target_weight_becomes_the_trade_that_reaches_it():
+    manager = RiskManager()
+
+    entry = manager.evaluate(_weighted(0.5), RiskContext(current_equity=10_000.0))
+    assert entry is not None
+    assert entry.side is SignalType.BUY
+    assert entry.quantity == 50.0
+
+    trim = manager.evaluate(
+        _weighted(0.2, SignalType.SELL),
+        RiskContext(current_equity=10_000.0, open_qty_by_symbol={"AAPL": 50.0}, open_positions=1),
+    )
+    assert trim is not None
+    assert trim.side is SignalType.SELL
+    assert trim.quantity == 30.0
+
+
+def test_a_target_weight_prices_a_contract_at_its_multiplier():
+    order = RiskManager().evaluate(
+        _weighted(0.5, symbol=OPTION.symbol, price=5.0),
+        RiskContext(current_equity=10_000.0, contracts=CHAIN),
+    )
+
+    # $5,000 is ten contracts at $5.00 with a hundred-share multiplier.
+    assert order is not None
+    assert order.quantity == 10.0
+
+
+def test_a_target_weight_counts_orders_still_resting():
+    context = RiskContext(
+        current_equity=10_000.0,
+        open_qty_by_symbol={"AAPL": 20.0},
+        open_orders=(resting("AAPL", 30.0, 100.0),),
+    )
+
+    # 20 held plus 30 resting already make the 50 shares a half weight asks for.
+    assert RiskManager().evaluate(_weighted(0.5), context) is None
+    order = RiskManager().evaluate(_weighted(0.6), context)
+    assert order is not None
+    assert order.quantity == pytest.approx(10.0)
+
+
+def test_a_target_weight_without_equity_is_dropped():
+    assert RiskManager().evaluate(_weighted(0.5), RiskContext()) is None

@@ -12,10 +12,11 @@ honoured; ``ORDER_SLOT`` is a stable name a strategy uses to find its own restin
 bucket the order competes in; ``MAX_ORDER_AGE_SECONDS`` lets a broker expire
 the order; ``REPLACE_ENTRY_ORDERS`` / ``REPLACE_EXIT_ORDERS`` ask for the symbol's resting
 entries / exits to be cancelled first; ``CANCEL_REMAINDER_AFTER_FIRST_FILL`` gives a limit
-IOC-like behaviour.
+IOC-like behaviour; ``TARGET_WEIGHT`` is the fraction of equity to hold in the symbol.
 
 Written by the framework: ``CONFIDENCE`` (RiskManager copies ``Signal.confidence``),
-``IDEMPOTENCY_KEY`` (live brokers stamp it before submission).
+``IDEMPOTENCY_KEY`` (live brokers stamp it before submission), ``TARGET_QUANTITY``
+(the position a ``TARGET_WEIGHT`` resolved to).
 """
 
 LIMIT_PRICE = "limit_price"
@@ -28,8 +29,10 @@ REPLACE_ENTRY_ORDERS = "replace_entry_orders"
 REPLACE_EXIT_ORDERS = "replace_exit_orders"
 CANCEL_REMAINDER_AFTER_FIRST_FILL = "cancel_remainder_after_first_fill"
 ALLOCATION_BUCKET = "allocation_bucket"
+TARGET_WEIGHT = "target_weight"
 
 CONFIDENCE = "confidence"
+TARGET_QUANTITY = "target_quantity"
 IDEMPOTENCY_KEY = "idempotency_key"
 STOP_LOSS = "stop_loss"
 TAKE_PROFIT = "take_profit"
@@ -45,7 +48,9 @@ __all__ = [
     "REPLACE_EXIT_ORDERS",
     "CANCEL_REMAINDER_AFTER_FIRST_FILL",
     "ALLOCATION_BUCKET",
+    "TARGET_WEIGHT",
     "CONFIDENCE",
+    "TARGET_QUANTITY",
     "IDEMPOTENCY_KEY",
     "STOP_LOSS",
     "TAKE_PROFIT",
