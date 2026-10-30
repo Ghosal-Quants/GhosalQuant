@@ -188,7 +188,9 @@ class QueueAwareFill:
     """
     Level-2 fills. A taker sweeps the displayed book immediately. A maker rests behind the size
     already showing at its price and fills only when a public print trades through that price and
-    consumes the queue ahead of it, or when the book itself crosses the order's limit.
+    consumes the queue ahead of it, or when the book itself crosses the order's limit. One print is
+    shared: the queues ahead of our orders and our fills draw it down in priority order, and the
+    participation cap applies only to a print at our own price, not to one that traded through it.
 
     Depth this model consumes is withheld from the book it returns from ``observe`` until the
     venue redisplays it, so the same liquidity cannot be taken twice.
@@ -216,6 +218,7 @@ class QueueAwareFill:
         self._last_displayed: dict[tuple[str, str, float], float] = {}
         self._displayed_keys: dict[str, set[tuple[str, str, float]]] = {}
         self._print_budget: dict[str, float] = {}
+        self._print_left: dict[str, float] = {}
         self._seen_trades: set[str] = set()
 
     # ----- FillModel ----- #
@@ -226,11 +229,12 @@ class QueueAwareFill:
             self._books[event.symbol] = event
         elif isinstance(event, PublicTrade):
             if event.trade_id is not None and event.trade_id in self._seen_trades:
-                self._print_budget[event.symbol] = 0.0
+                self._print_budget[event.symbol] = self._print_left[event.symbol] = 0.0
                 return
             if event.trade_id is not None:
                 self._seen_trades.add(event.trade_id)
             traded = max(0.0, float(event.quantity))
+            self._print_left[event.symbol] = traded
             self._print_budget[event.symbol] = self._round_lot(traded * self.public_trade_participation)
 
     def view(self, event: MarketEvent) -> MarketEvent:
@@ -314,10 +318,11 @@ class QueueAwareFill:
             fill_qty = self._round_lot(min(remaining, float(level.quantity)))
             if fill_qty <= _EPS:
                 break
-            # Whoever crosses pays the resting side's price: we take the level when we are the
-            # aggressor, and keep our own limit when the book comes to a quote already resting.
-            price = level.price if taking or aggressor or limit is None else limit
-            planned.append(PlannedFill(price, fill_qty, resting.liquidity))
+            # Whoever crosses pays the resting side's price and the taker fee: we take the level when we
+            # are the aggressor, and keep our own limit when the book comes to a quote already resting.
+            crossing = taking or aggressor or limit is None
+            price = level.price if crossing else limit
+            planned.append(PlannedFill(price, fill_qty, Liquidity.TAKER if crossing else resting.liquidity))
             self._consume(resting.symbol, side, level.price, fill_qty)
             remaining -= fill_qty
         return planned
@@ -326,23 +331,28 @@ class QueueAwareFill:
         if resting.liquidity is Liquidity.TAKER or trade.time_stamp < resting.submitted_at:
             return ()
         limit = resting.limit_price
-        if limit is not None and (
-            trade.price > limit if resting.side is SignalType.BUY else trade.price < limit
-        ):
+        buying = resting.side is SignalType.BUY
+        # Prints within _EPS of the limit are at it: reported prices can carry float noise.
+        if limit is not None and (trade.price > limit + _EPS if buying else trade.price < limit - _EPS):
             return ()
 
-        traded = max(0.0, float(trade.quantity))
-        consumed = min(resting.queue_ahead_quantity, traded)
+        left = self._print_left.get(trade.symbol, 0.0)
+        consumed = min(resting.queue_ahead_quantity, left)
         resting.queue_ahead_quantity -= consumed
-        traded -= consumed
-        if resting.queue_ahead_quantity > _EPS or traded <= _EPS:
+        left -= consumed
+        self._print_left[trade.symbol] = left
+        if resting.queue_ahead_quantity > _EPS or left <= _EPS:
             return ()
 
+        # A print at a worse price than our limit had to trade through all of us first.
+        through = limit is not None and (trade.price < limit - _EPS if buying else trade.price > limit + _EPS)
         budget = self._print_budget.get(trade.symbol, 0.0)
-        fill_qty = self._round_lot(min(resting.remaining_quantity, traded, budget))
+        fill_qty = self._round_lot(min(resting.remaining_quantity, left if through else min(left, budget)))
         if fill_qty <= _EPS:
             return ()
-        self._print_budget[trade.symbol] = budget - fill_qty
+        self._print_left[trade.symbol] = left - fill_qty
+        if not through:
+            self._print_budget[trade.symbol] = budget - fill_qty
         return (PlannedFill(limit if limit is not None else trade.price, fill_qty, resting.liquidity),)
 
     def priority(self, resting: RestingOrder) -> tuple[float, datetime, str]:

@@ -71,6 +71,7 @@ class OrderBookSimBroker(SimulatedBroker):
         return self.fill_model.adjusted(book)
 
     def observe_unchanged_book(self, book: OrderBook) -> OrderBook:
-        """Record a book without re-running resting-order matching."""
+        """Record a book, and the time it was seen, without re-running resting-order matching."""
         self.fill_model.note_book(book)
+        self._now = book.time_stamp if self._now is None else max(self._now, book.time_stamp)
         return self.fill_model.adjusted(book)

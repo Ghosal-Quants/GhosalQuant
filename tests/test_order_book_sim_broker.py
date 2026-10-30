@@ -176,6 +176,26 @@ def test_one_print_is_shared_by_price_then_time_priority():
     assert [(f.price, f.quantity) for f in fills] == [(100.2, 3.0), (100.0, 3.0), (100.0, 1.0)]
 
 
+def test_the_queue_ahead_of_each_order_draws_on_the_same_print():
+    broker = _broker()
+    broker.on_order_book(_book(0, [(100.0, 5)], [(101.0, 5)]))
+    broker.submit(_order(0, SignalType.BUY, 3.0, 100.0, Liquidity.MAKER))
+    broker.submit(_order(1, SignalType.BUY, 3.0, 100.0, Liquidity.MAKER))
+
+    broker.on_public_trade(_trade(2, 100.0, 7.0, "p"))
+    assert [(f.price, f.quantity) for f in broker.get_fills()] == [(100.0, 2.0)]
+    assert [view.queue_ahead_quantity for view in broker.open_order_views("TEST")] == [0.0, 5.0]
+
+
+def test_a_print_through_our_price_is_not_capped_by_participation():
+    broker = _broker(public_trade_participation=0.25, model_queue_position=False)
+    broker.on_order_book(_book(0, [(100.0, 0)], [(101.0, 5)]))
+    broker.submit(_order(0, SignalType.BUY, 100.0, 100.5, Liquidity.MAKER))
+
+    broker.on_public_trade(_trade(1, 100.0, 40.0, "p"))
+    assert [(f.price, f.quantity) for f in broker.get_fills()] == [(100.5, 40.0)]
+
+
 def test_duplicate_trade_ids_are_ignored():
     broker = _broker(model_queue_position=False)
     broker.on_order_book(_book(0, [(100.0, 0)], [(101.0, 5)]))
@@ -186,11 +206,29 @@ def test_duplicate_trade_ids_are_ignored():
     assert sum(f.quantity for f in broker.get_fills()) == 2.0
 
 
+def test_a_duplicate_print_does_not_advance_the_queue():
+    broker = _broker()
+    broker.on_order_book(_book(0, [(100.0, 5)], [(101.0, 5)]))
+    broker.submit(_order(0, SignalType.BUY, 1.0, 100.0, Liquidity.MAKER))
+
+    broker.on_public_trade(_trade(1, 100.0, 3.0, "dup"))
+    broker.on_public_trade(_trade(1, 100.0, 3.0, "dup"))
+    assert broker.open_order_views("TEST")[0].queue_ahead_quantity == 2.0
+
+
 def test_prints_before_the_order_existed_do_not_fill_it():
     broker = _broker(model_queue_position=False)
     broker.on_order_book(_book(5, [(100.0, 0)], [(101.0, 5)]))
     broker.submit(_order(5, SignalType.BUY, 5.0, 100.0, Liquidity.MAKER))
     broker.on_public_trade(_trade(4, 100.0, 5.0, "old"))
+    assert broker.get_fills() == []
+
+
+def test_an_order_is_not_submitted_before_its_own_time():
+    broker = _broker(model_queue_position=False)
+    broker.on_order_book(_book(0, [(100.0, 0)], [(101.0, 5)]))
+    broker.submit(_order(5, SignalType.BUY, 5.0, 100.0, Liquidity.MAKER))
+    broker.on_public_trade(_trade(3, 100.0, 5.0, "earlier"))
     assert broker.get_fills() == []
 
 
@@ -208,6 +246,17 @@ def test_taker_sweeps_levels_and_never_rests():
 
     expected_fee = (100.0 * 2.0 + 100.5 * 3.0) * 0.001
     assert sum(f.commission for f in fills) == pytest.approx(expected_fee)
+
+
+def test_a_maker_order_that_crosses_on_arrival_takes_the_level_as_a_taker():
+    broker = _broker(maker_rebate_bps=20.0, taker_fee_bps=50.0)
+    broker.on_order_book(_book(0, [(99.0, 5)], [(100.0, 2)]))
+    broker.submit(_order(0, SignalType.BUY, 3.0, 100.5, Liquidity.MAKER))
+
+    fill, = broker.get_fills()
+    assert (fill.price, fill.quantity, fill.liquidity) == (100.0, 2.0, Liquidity.TAKER)
+    assert fill.commission == pytest.approx(100.0 * 2.0 * 0.005)
+    assert broker.open_order_views("TEST")[0].remaining_quantity == 1.0
 
 
 def test_taker_consumption_is_withheld_from_the_book_until_redisplayed():
@@ -341,6 +390,14 @@ def test_observe_unchanged_book_does_not_match_orders():
     broker.submit(_order(0, SignalType.BUY, 1.0, 100.0, Liquidity.MAKER))
     broker.observe_unchanged_book(_book(1, [(100.0, 5)], [(101.0, 5)]))
     assert len(broker.open_order_views()) == 1
+
+
+def test_an_unchanged_book_still_moves_the_broker_clock():
+    broker = _broker()
+    broker.on_order_book(_book(0, [(99.0, 5)], [(100.0, 5)]))
+    broker.observe_unchanged_book(_book(9, [(99.0, 5)], [(100.0, 5)]))
+    broker.submit(_order(9, SignalType.BUY, 1.0, 100.0, Liquidity.TAKER))
+    assert [fill.time_stamp for fill in broker.get_fills()] == [_at(9)]
 
 
 # ----- Through the ExecutionSystem ----- #

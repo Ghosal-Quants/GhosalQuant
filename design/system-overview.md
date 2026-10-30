@@ -808,10 +808,11 @@ A queue-aware broker for L2 order books. Use it whenever the data source yields 
   (`OpenOrderView.queue_ahead_quantity`) and fills only when a `PublicTrade` trades through that
   price and consumes the queue ahead of it, or when the book itself crosses its limit.
 - Whoever crosses pays the resting side's price: an order that is marketable **on submission**
-  takes the level price, while an order the book later crosses keeps **its own limit**.
-- One print is shared across eligible orders by price-then-time priority, and
-  `public_trade_participation` caps how much of each print can reach them. Repeated `trade_id`s
-  are ignored.
+  takes the level price as a taker, while an order the book later crosses keeps **its own limit**.
+- One print is shared across eligible orders by price-then-time priority, the queue ahead of each
+  drawing on it too, and `public_trade_participation` caps how much of a print at an order's own
+  price can reach it; a print through the order's price fills it first. Repeated `trade_id`s are
+  ignored.
 - `lot_size` floors fills to whole units; `maker_rebate_bps` is credited as a negative
   `Fill.commission` while `taker_fee_bps` is charged. Both fee arguments are required.
 - Depth the broker consumes is withheld from the book returned by `on_order_book` until the venue

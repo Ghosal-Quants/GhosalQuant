@@ -111,7 +111,7 @@ class SimulatedBroker(Broker):
 
     def submit(self, order: Order) -> str:
         order_id = f"{self.order_id_prefix}-{next(self._id_seq)}"
-        submitted_at = self._now or order.time_stamp
+        submitted_at = order.time_stamp if self._now is None else max(self._now, order.time_stamp)
         resting = RestingOrder(
             broker_order_id=order_id,
             order=order,
