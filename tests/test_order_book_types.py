@@ -78,8 +78,12 @@ def test_order_book_rejects_misordered_levels():
         _book([(99.0, 1), (100.0, 1)], [])
     with pytest.raises(ValueError):
         _book([], [(101.0, 1), (100.5, 1)])
-    with pytest.raises(ValueError):
-        _book([(100.0, 1), (100.0, 1)], [])
+
+
+def test_an_order_book_may_list_each_resting_order():
+    book = _book([(100.0, 1), (100.0, 4), (99.0, 2)], [(101.0, 3), (101.0, 5)])
+    assert book.best_bid == BookLevel(100.0, 1)
+    assert (book.bid_quantity, book.ask_quantity) == (7.0, 8.0)
 
 
 def test_order_book_one_sided_and_empty_books():

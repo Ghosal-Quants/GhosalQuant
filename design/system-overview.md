@@ -379,7 +379,7 @@ class BookLevel:
 class OrderBook:
     time_stamp: datetime
     symbol: str
-    bids: tuple[BookLevel, ...]      # best first, descending price
+    bids: tuple[BookLevel, ...]      # best first, descending price; repeated where the venue lists each order
     asks: tuple[BookLevel, ...]      # best first, ascending price
     sequence: int | None = None
     checksum: str | None = None

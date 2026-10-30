@@ -35,7 +35,8 @@ class Liquidity(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class BookLevel:
-    """One price level of an order book. ``quantity`` is the displayed size at ``price``."""
+    """One price level of an order book, or one resting order where the venue lists each. ``quantity``
+    is the displayed size at ``price``."""
     price: float
     quantity: float
 
@@ -53,10 +54,10 @@ class OrderBook:
     """
     The visible order book of one symbol at one instant.
 
-    ``bids`` are ordered best first (descending price) and ``asks`` best first (ascending price).
-    Derived fields (``best_bid``, ``best_ask``, ``spread``, ``mid_price``, ``spread_bps``,
-    ``bid_quantity``, ``ask_quantity``) are computed once on construction so a strategy that sees
-    thousands of books per session pays for them once.
+    ``bids`` are ordered best first (descending price) and ``asks`` best first (ascending price); a
+    venue that lists each resting order repeats a price. Derived fields (``best_bid``, ``best_ask``,
+    ``spread``, ``mid_price``, ``spread_bps``, ``bid_quantity``, ``ask_quantity``) are computed once
+    on construction so a strategy that sees thousands of books per session pays for them once.
 
     ``sequence`` is the feed's sequence number when it has one; ``checksum`` is a content hash a
     recorder may attach so identical consecutive books can be recognised without comparing levels.
@@ -83,10 +84,10 @@ class OrderBook:
         object.__setattr__(self, "asks", asks)
 
         for previous, current in zip(bids, bids[1:]):
-            if current.price >= previous.price:
+            if current.price > previous.price:
                 raise ValueError("OrderBook bids must be ordered best first (descending price)")
         for previous, current in zip(asks, asks[1:]):
-            if current.price <= previous.price:
+            if current.price < previous.price:
                 raise ValueError("OrderBook asks must be ordered best first (ascending price)")
 
         best_bid = bids[0] if bids else None
