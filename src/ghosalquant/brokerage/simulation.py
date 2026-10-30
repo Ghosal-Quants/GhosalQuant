@@ -130,6 +130,9 @@ class SimulatedBroker(Broker):
         self._register(order_id, resting)
         return order_id
 
+    def on_fill(self, fill: Fill) -> None:
+        """Called as each fill is booked, before it is delivered; a venue model extends it."""
+
     def get_fills(self) -> list[Fill]:
         if not self._has_market_data and self.fill_without_market_data:
             self._fill_without_market_data()
@@ -155,21 +158,19 @@ class SimulatedBroker(Broker):
                 continue
             # The realised liquidity is the model's to report; a bar model cannot know it.
             liquidity = fill.liquidity
-            self._pending_fills.append(
-                Fill(
-                    time_stamp=self._now or resting.submitted_at,
-                    symbol=resting.symbol,
-                    side=resting.side,
-                    quantity=fill.quantity,
-                    price=fill.price,
-                    broker_order_id=resting.broker_order_id,
-                    commission=self.commission.charge(
-                        price=fill.price, quantity=fill.quantity, liquidity=liquidity
-                    ),
-                    liquidity=liquidity,
-                )
+            booked = Fill(
+                time_stamp=self._now or resting.submitted_at,
+                symbol=resting.symbol,
+                side=resting.side,
+                quantity=fill.quantity,
+                price=fill.price,
+                broker_order_id=resting.broker_order_id,
+                commission=self.commission.charge(price=fill.price, quantity=fill.quantity, liquidity=liquidity),
+                liquidity=liquidity,
             )
+            self._pending_fills.append(booked)
             resting.remaining_quantity = max(0.0, resting.remaining_quantity - fill.quantity)
+            self.on_fill(booked)
 
     def _finished(self, resting: RestingOrder) -> bool:
         if resting.remaining_quantity <= _EPS:

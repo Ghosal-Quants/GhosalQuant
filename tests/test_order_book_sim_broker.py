@@ -259,6 +259,22 @@ def test_a_maker_order_that_crosses_on_arrival_takes_the_level_as_a_taker():
     assert broker.open_order_views("TEST")[0].remaining_quantity == 1.0
 
 
+def test_a_venue_model_sees_each_fill_as_it_is_booked():
+    class Recording(OrderBookSimBroker):
+        def __init__(self) -> None:
+            super().__init__(maker_rebate_bps=0.0, taker_fee_bps=0.0)
+            self.booked = []
+
+        def on_fill(self, fill) -> None:
+            self.booked.append((fill.price, fill.quantity))
+
+    broker = Recording()
+    broker.on_order_book(_book(0, [(99.0, 5)], [(100.0, 2), (100.5, 3)]))
+    broker.submit(_order(0, SignalType.BUY, 4.0, 100.5, Liquidity.TAKER))
+    assert broker.booked == [(100.0, 2.0), (100.5, 2.0)]
+    assert [(f.price, f.quantity) for f in broker.get_fills()] == broker.booked
+
+
 def test_taker_consumption_is_withheld_from_the_book_until_redisplayed():
     broker = _broker()
     broker.on_order_book(_book(0, [(99.0, 5)], [(100.0, 10)]))

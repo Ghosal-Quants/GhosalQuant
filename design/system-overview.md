@@ -776,7 +776,8 @@ SimulatedBroker(
 
 Because the lifecycle is shared, latency, rejection, TTL expiry, order slots and
 `OpenOrderQueries` are available to every model rather than to whichever broker happened to
-implement them.
+implement them. A venue model that books more than the fill itself extends `on_fill(fill)`, called
+as each fill is booked.
 
 Two fill models ship:
 
