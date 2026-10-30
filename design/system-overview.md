@@ -553,12 +553,12 @@ Risk management sits between signal generation and order execution. The `RiskMan
 | `MaxOpenPositions` | Blocks `BUY` orders when the number of open positions reaches a configured limit (default 3). |
 | `ConfidenceSizer` | Linearly interpolates quantity between `min_quantity` and `max_quantity` based on signal confidence. Blocks the order if the resulting quantity is zero. |
 | `RegimeFilter` | Blocks or penalises orders based on `draft.metadata["regime"]`. |
-| `DrawdownKillSwitch` | Reduces or blocks new `BUY` orders based on portfolio drawdown. |
+| `DrawdownKillSwitch` | Reduces or blocks new `BUY` orders based on portfolio drawdown; a subclass overrides `exempt` to admit chosen orders. |
 | `CorrelationFilter` | Blocks new `BUY` orders when the proposed symbol is too correlated with currently held symbols. Waits for its `lookback` window to fill before acting; `ramp_up` buys an earlier, weaker answer. |
 | `IntegerQuantity` | Rounds the draft down to whole tradable units (`lot_size`), dropping one that rounds away. |
 | `SignalQuantityCap` | Holds a sizer to the `max_quantity` the signal asked for, so capital-based sizing cannot exceed the size the strategy could actually see. |
-| `SymbolCapitalFractionSizer` | Sizes a `BUY` by the money it should spend rather than the units it should buy, topping up towards each symbol's share of capital. |
-| `MaxSymbolExposure` | Caps one symbol's notional as a fraction of sizing capital, counting resting buys and charging a taker's fee into the ceiling. Trims rather than blocks where there is room. |
+| `SymbolCapitalFractionSizer` | Sizes a `BUY` by the money it should spend rather than the units it should buy, topping up towards each symbol's share of capital. `presized_key` leaves a buy sized from its own budget alone. |
+| `MaxSymbolExposure` | Caps one symbol's notional as a fraction of sizing capital, counting resting buys and charging a taker's fee (or the order's `RISK_UNIT_COST`) into the ceiling. Trims rather than blocks where there is room. |
 | `CashAllocationRule` | Keeps dry powder: trims a `BUY` to the tightest of the account, symbol, bucket and per-order ceilings on how much may sit in resting buys. |
 | `TickRounding` | Rounds a limit price to one the venue accepts. A buy floors and a sell ceilings, so it can only move the price in the trader's favour. `tick_size_by_symbol` overrides the default per instrument. |
 
@@ -580,8 +580,11 @@ capital-aware rules size from. It is fixed at `capital` until `reference_capital
 `RiskContext.current_equity` so a book in drawdown sizes down instead of letting each order become a larger share
 of what is left.
 
-`plan_cash_reclamation(...)` returns the resting `order_slot`s to cancel to fund a better order on the same symbol,
-weakest first. It plans only; cancelling is the caller's, through `Broker.cancel_open_orders`.
+`CashAllocationRule`'s `classify(side, metadata)` buckets new and resting orders alike, and `is_priority` picks the
+orders `priority_total_fraction` applies to; `cash_ceilings(...)` returns the four ceilings and what rests under each
+for a caller that sizes outside a `RiskManager`. `plan_cash_reclamation(...)` returns the resting `order_slot`s to
+cancel to fund a better order on the same symbol: those `eligible` admits, in `weakest_first` order. It plans only;
+cancelling is the caller's, through `Broker.cancel_open_orders`.
 
 ### 6.3 Building from Config
 `build_risk_manager(risk_config)` in `ghosalquant.risk.builder` constructs a `RiskManager` from a `RiskConfig`

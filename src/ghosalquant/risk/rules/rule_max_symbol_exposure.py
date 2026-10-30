@@ -30,7 +30,8 @@ class MaxSymbolExposure(RiskRule):
     ``MaxOpenPositions`` counts positions; this measures them, which is the difference between
     three positions and three positions where one is the whole account. Resting buys count against
     the ceiling, because an unfilled bid is capital already committed, and a taker's fee is
-    charged into the unit cost so the ceiling still holds once fees are paid.
+    charged into the unit cost so the ceiling still holds once fees are paid. A strategy that
+    knows its all-in unit cost sets ``RISK_UNIT_COST``, which replaces the fee estimate.
 
     An order over the ceiling is trimmed rather than dropped; only one with no room left is
     blocked.
@@ -107,8 +108,11 @@ class MaxSymbolExposure(RiskRule):
         return max(0.0, held) + max(0.0, resting)
 
     def _unit_cost(self, draft: OrderDraft, context: RiskContext) -> float:
+        multiplier = context.contracts.get(draft.symbol).multiplier
+        stated = draft.metadata.get(metadata_keys.RISK_UNIT_COST)
+        if stated is not None:
+            return max(float(draft.price), float(stated)) * multiplier
         liquidity = draft.liquidity or draft.metadata.get(metadata_keys.LIQUIDITY)
         taker = str(getattr(liquidity, "value", liquidity)).lower() == Liquidity.TAKER.value
         fee_rate = self.taker_fee_bps / 10_000.0 if taker else 0.0
-        multiplier = context.contracts.get(draft.symbol).multiplier
         return float(draft.price) * multiplier * (1.0 + fee_rate)

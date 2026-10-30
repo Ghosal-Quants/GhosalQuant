@@ -25,8 +25,10 @@ from ghosalquant.risk import (
     FractionalKellySizer,
     CashAllocationConfig,
     CashAllocationRule,
+    CashCeilings,
     ConfidenceSizer,
     CorrelationFilter,
+    DrawdownKillSwitch,
     IntegerQuantity,
     MaxOpenPositions,
     MaxSymbolExposure,
@@ -37,6 +39,7 @@ from ghosalquant.risk import (
     SymbolCapitalFractionSizer,
     TickRounding,
     Window,
+    cash_ceilings,
     plan_cash_reclamation,
     resting_buy_notional,
     sizing_capital,
@@ -222,6 +225,38 @@ def test_a_takers_fee_is_charged_into_the_ceiling():
     assert order.quantity == pytest.approx(2_000.0 / 101.0)
 
 
+def test_a_stated_unit_cost_replaces_the_fee_estimate_but_never_undercuts_the_price():
+    rule = MaxSymbolExposure(capital=10_000.0, max_notional_fraction=0.2, taker_fee_bps=100.0)
+    stated = draft(quantity=100.0, price=100.0, **{metadata_keys.RISK_UNIT_COST: 125.0})
+    stated.liquidity = Liquidity.TAKER
+    rule.apply(stated, RiskContext())
+    assert stated.quantity == pytest.approx(16.0)
+
+    below = draft(quantity=100.0, price=100.0, **{metadata_keys.RISK_UNIT_COST: 80.0})
+    rule.apply(below, RiskContext())
+    assert below.quantity == pytest.approx(20.0)
+
+
+# ----- Drawdown ----- #
+
+class _RecoveryExempt(DrawdownKillSwitch):
+    def exempt(self, draft, context):
+        return draft.metadata.get("recovery") is True
+
+
+def test_drawdown_reduces_then_blocks_buys_unless_exempt():
+    rule = _RecoveryExempt(reduce_threshold=-0.08, kill_threshold=-0.15, reduce_multiplier=0.5)
+
+    reduced = draft(quantity=10.0)
+    assert rule.apply(reduced, RiskContext(current_drawdown=-0.10)) is True
+    assert reduced.quantity == 5.0
+    assert rule.apply(draft(quantity=10.0), RiskContext(current_drawdown=-0.20)) is False
+
+    recovery = draft(quantity=10.0, recovery=True)
+    assert rule.apply(recovery, RiskContext(current_drawdown=-0.20)) is True
+    assert recovery.quantity == 10.0
+
+
 # ----- Sizing by money, not by count ----- #
 
 def test_a_notional_sizer_spends_the_same_money_on_any_price():
@@ -257,6 +292,19 @@ def test_a_notional_sizer_sells_what_is_held_and_scales_a_buy_by_confidence():
     half = draft(**{metadata_keys.CONFIDENCE: 0.5})
     rule.apply(half, RiskContext())
     assert half.quantity == pytest.approx(5.0)
+
+
+def test_a_presized_buy_keeps_its_quantity():
+    rule = SymbolCapitalFractionSizer(
+        capital=10_000.0, default_max_notional_fraction=0.1, presized_key="own_budget"
+    )
+    own = draft(quantity=3.0, own_budget=True)
+    assert rule.apply(own, RiskContext()) is True
+    assert own.quantity == 3.0
+
+    sized = draft(quantity=3.0, own_budget="yes")
+    rule.apply(sized, RiskContext())
+    assert sized.quantity == pytest.approx(10.0)
 
 
 def test_a_symbol_with_no_budget_is_refused():
@@ -316,6 +364,53 @@ def test_an_order_with_no_headroom_left_is_blocked():
     assert rule.apply(draft(quantity=10.0), context) is False
 
 
+def test_resting_orders_are_bucketed_by_the_same_classifier_as_new_ones():
+    by_reason = lambda side, metadata: "ladder" if metadata.get("reason") == "ladder" else "other"
+    rule = CashAllocationRule(
+        CashAllocationConfig(total_fraction=1.0, max_symbol_fraction=1.0, bucket_fractions={"ladder": 0.25}),
+        capital=10_000.0,
+        classify=by_reason,
+    )
+    order = draft(quantity=100.0, reason="ladder")
+    context = RiskContext(open_orders=(resting("MSFT", 20.0, 100.0, reason="ladder"),))
+
+    assert rule.apply(order, context) is True
+    assert order.quantity == pytest.approx(5.0)
+
+
+def test_priority_orders_may_use_more_of_the_account():
+    config = CashAllocationConfig(total_fraction=0.5, max_symbol_fraction=1.0, priority_total_fraction=0.8)
+    rule = CashAllocationRule(
+        config, capital=10_000.0, is_priority=lambda side, metadata: metadata.get("urgent") is True
+    )
+    context = RiskContext(open_orders=(resting("MSFT", 40.0, 100.0),))
+
+    routine, urgent = draft(quantity=100.0), draft(quantity=100.0, urgent=True)
+    rule.apply(routine, context)
+    rule.apply(urgent, context)
+    assert routine.quantity == pytest.approx(10.0)
+    assert urgent.quantity == pytest.approx(40.0)
+
+    with pytest.raises(ValueError):
+        CashAllocationConfig(total_fraction=0.5, priority_total_fraction=0.4)
+
+
+def test_the_ceilings_report_what_rests_under_each():
+    ceilings = cash_ceilings(
+        CashAllocationConfig(total_fraction=0.9, max_symbol_fraction=0.3, max_order_fractions={"default": 0.1}),
+        capital=10_000.0,
+        symbol="AAPL",
+        bucket="default",
+        open_orders=(resting("AAPL", 10.0, 100.0), resting("MSFT", 80.0, 100.0)),
+    )
+
+    assert ceilings == CashCeilings(
+        total=9_000.0, total_resting=9_000.0, symbol=3_000.0, symbol_resting=1_000.0,
+        bucket=10_000.0, bucket_resting=9_000.0, order=1_000.0,
+    )
+    assert ceilings.headroom == 0.0
+
+
 def test_a_sell_is_outside_the_cash_policy():
     rule = CashAllocationRule(CashAllocationConfig(total_fraction=0.01), capital=10_000.0)
     sell = draft(side=SignalType.SELL, quantity=50.0)
@@ -335,8 +430,9 @@ def test_reclamation_cancels_the_weakest_orders_until_enough_is_freed():
     strengths = {"weak": 1.0, "middling": 2.0, "strong": 9.0}
 
     plan = plan_cash_reclamation(
-        required_notional=900.0, open_orders=orders, symbol="AAPL", candidate_strength=5.0,
-        strength=lambda view: strengths[view.order.metadata[metadata_keys.ORDER_SLOT]],
+        required_notional=900.0, open_orders=orders, symbol="AAPL",
+        eligible=lambda view: strengths[view.order_slot] < 5.0,
+        weakest_first=lambda view: strengths[view.order_slot],
     )
 
     # "strong" outranks the candidate, so only the two weaker slots are offered.
@@ -348,12 +444,19 @@ def test_reclamation_gives_up_when_the_weaker_orders_cannot_fund_it():
     orders = (resting("AAPL", 1.0, 100.0, slot="weak"),)
 
     plan = plan_cash_reclamation(
-        required_notional=5_000.0, open_orders=orders, symbol="AAPL", candidate_strength=5.0,
-        strength=lambda _view: 1.0,
+        required_notional=5_000.0, open_orders=orders, symbol="AAPL",
+        eligible=lambda _view: True, weakest_first=lambda _view: 1.0,
     )
-
     assert plan.order_slots == ()
     assert plan.reclaimed_notional == 0.0
+
+    partial = plan_cash_reclamation(
+        required_notional=5_000.0, open_orders=orders, symbol="AAPL",
+        eligible=lambda _view: True, weakest_first=lambda _view: 1.0, allow_partial=True,
+    )
+    assert partial.order_slots == ("weak",)
+    assert partial.reclaimed_notional == pytest.approx(100.0)
+    assert partial.required_notional == 5_000.0
 
 
 # ----- Adding to a held symbol opens nothing new ----- #

@@ -23,7 +23,8 @@ class DrawdownKillSwitch(RiskRule):
         (e.g. ``-0.10`` means 10 % below the peak).
 
         If ``current_drawdown`` is ``None`` (not yet available) the rule passes
-        through without modification.
+        through without modification. A subclass admits chosen orders through
+        both tiers by overriding ``exempt``.
 
         :param reduce_threshold: float
             Drawdown level at which position sizes start being reduced.
@@ -47,12 +48,14 @@ class DrawdownKillSwitch(RiskRule):
         dd = context.current_drawdown
         if dd is None:
             return True  # No drawdown info yet, pass through
+        if self.exempt(draft, context):
+            return True
 
         # Kill switch
         if dd <= self.kill_threshold:
             logger.warning(
-                "DrawdownKillSwitch blocked %s: drawdown %.2f%% past kill threshold %.2f%%",
-                draft.symbol, dd * 100.0, self.kill_threshold * 100.0,
+                "%s blocked %s: drawdown %.2f%% past kill threshold %.2f%%",
+                type(self).__name__, draft.symbol, dd * 100.0, self.kill_threshold * 100.0,
             )
             return False
 
@@ -61,8 +64,12 @@ class DrawdownKillSwitch(RiskRule):
             original = draft.quantity
             draft.quantity = draft.quantity * self.reduce_multiplier
             logger.info(
-                "DrawdownKillSwitch reduced %s at %.2f%% drawdown: %.4f -> %.4f",
-                draft.symbol, dd * 100.0, original, draft.quantity,
+                "%s reduced %s at %.2f%% drawdown: %.4f -> %.4f",
+                type(self).__name__, draft.symbol, dd * 100.0, original, draft.quantity,
             )
 
         return True
+
+    def exempt(self, draft: OrderDraft, context: RiskContext) -> bool:
+        """Whether this buy passes regardless of drawdown; none does by default."""
+        return False

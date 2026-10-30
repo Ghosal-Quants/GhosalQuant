@@ -4,6 +4,8 @@ from enum import Enum
 from typing import Any, Union
 import warnings
 
+from . import metadata_keys
+
 
 @dataclass(frozen=True, slots=True)
 class Bar:
@@ -376,6 +378,11 @@ class OpenOrderView:
     def notional(self) -> float:
         price = self.limit_price if self.limit_price is not None else self.order.effective_limit_price
         return float(price) * float(self.remaining_quantity)
+
+    @property
+    def order_slot(self) -> str | None:
+        slot = (self.order.metadata or {}).get(metadata_keys.ORDER_SLOT)
+        return None if slot is None else str(slot)
 
 
 @dataclass(slots=True)

@@ -101,6 +101,7 @@ def make_cash_allocation(p: dict[str, Any]) -> CashAllocationRule:
         },
         default_bucket_fraction=float(p.get("default_bucket_fraction", 1.0)),
         default_max_order_fraction=float(p.get("default_max_order_fraction", 1.0)),
+        priority_total_fraction=_optional_float(p.get("priority_total_fraction")),
     )
     return CashAllocationRule(
         config,
