@@ -127,8 +127,13 @@ class OrderBook:
         return (bid_quantity - ask_quantity) / total
 
     def replace(self, **changes: Any) -> "OrderBook":
-        """Return a copy with the given init fields changed; derived fields are recomputed."""
-        return _dataclass_replace(self, **changes)
+        """Return a copy with the given fields changed; derived fields are recomputed if the levels change."""
+        if not changes.keys() <= _BOOK_LABELS:
+            return _dataclass_replace(self, **changes)
+        book = object.__new__(type(self))
+        for name in self.__dataclass_fields__:
+            object.__setattr__(book, name, changes[name] if name in changes else getattr(self, name))
+        return book
 
     def __str__(self) -> str:
         return (
@@ -174,6 +179,9 @@ class PublicTrade:
 
 
 MarketEvent = Union[Bar, OrderBook, PublicTrade]
+
+# Fields a book can change without its levels, and so without recomputing what derives from them.
+_BOOK_LABELS = frozenset({"time_stamp", "symbol", "sequence", "checksum"})
 
 
 def _coerce_liquidity(value: Any) -> "Liquidity | None":

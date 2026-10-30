@@ -119,6 +119,10 @@ def test_order_book_replace_recomputes_derived_fields():
     assert later.mid_price == pytest.approx(100.125)
     assert book.spread == pytest.approx(0.5)  # the original is untouched
 
+    retimed = book.replace(time_stamp=_ts("2025-11-15 09:30:02"))
+    assert retimed == book.replace(time_stamp=retimed.time_stamp, bids=book.bids)
+    assert retimed.bids is book.bids and retimed.spread == book.spread
+
 
 def test_public_trade_defaults_and_validation():
     trade = PublicTrade(time_stamp=_ts("2025-11-15 09:30:00"), symbol="TEST", price=100.0, quantity=3.0)
