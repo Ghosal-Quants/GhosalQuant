@@ -7,9 +7,9 @@ from .valuation import (
     PortfolioValuation,
     PortfolioValuationEngine,
     SymbolValuation,
-    ValuationBasis,
     liquidate_into_bids,
     profitable_bid_liquidation,
+    value_portfolio,
 )
 
 __all__ = [
@@ -24,7 +24,7 @@ __all__ = [
     "PortfolioValuation",
     "PortfolioValuationEngine",
     "SymbolValuation",
-    "ValuationBasis",
     "liquidate_into_bids",
     "profitable_bid_liquidation",
+    "value_portfolio",
 ]

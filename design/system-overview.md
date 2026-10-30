@@ -716,20 +716,27 @@ from the account, and `ExecutionSystem`'s journal (§15.4) is what stops a fill 
   for inventory there is no bid for. Capping at cost means an unrealised gain or a thin high quote never inflates
   buying capacity, which is what makes it the right series to feed `DrawdownKillSwitch`.
 
-**A book is never required.** A symbol with no book, a stale one (`stale_after_seconds`), one invalidated by
-`invalidate_book(symbol)`, or one marked untradable by `set_tradable(symbol, False)` falls back to its mark price and
-is reported as `ValuationBasis.MARKED` — it is *not* valued at zero, which is what a bar-only feed would otherwise
-produce. Every `SymbolValuation` carries the `basis` it used (`EXECUTABLE` / `INDICATIVE` / `MARKED`) and
-`PortfolioValuation` exposes `basis_counts`, `fully_executable`, and `marked_symbols`, so a drawdown reading is never
-silently half-executable. `require_book=True` turns a missing book into an error instead, which is only right when
-every symbol is known to have one.
+**A book is optional.** A symbol with no book, a stale one (`stale_after_seconds`), one invalidated by
+`invalidate_book(symbol, at)` or by a later print passed to `observe_trade`, or one marked untradable by
+`set_tradable(symbol, False)` is not sold into. With `value_unbooked_at_mark=True` (the default) it counts at its mark
+capped at cost, so a bar-only portfolio is valued normally; with `False` it counts as nothing, the stricter reading
+when every symbol is expected to have a book. Each `SymbolValuation` reports `book_stale`, `book_invalidated` and
+`tradable`.
+
+A simulated broker's book after our own fills can differ from the venue's: `observe_book(book, executable_book)`
+judges staleness on the first and walks depth on the second. Orders resting at one price are sold into as one
+level, in whole lots when `lot_size` is set. Valuations are cached per symbol, so `risk_equity(...)` is cheap enough
+to ask for on every event, and `change_token(...)` is equal whenever a snapshot would be.
 
 ```python
 engine = PortfolioValuationEngine(taker_fee_bps=7.5, stale_after_seconds=60.0)
 engine.observe_book(book)                      # whenever a book arrives
 snapshot = engine.snapshot(now, portfolio=portfolio, open_orders=broker.open_order_views())
-snapshot.risk_equity, snapshot.marked_nav, snapshot.fully_executable
+snapshot.risk_equity, snapshot.marked_nav, snapshot.executable_liquidation_equity
 ```
+
+`observational_snapshot(...)` values without raising the peak or caching, for audits; `value_portfolio(...)` is the
+same valuation as a pure function.
 
 Supporting pieces: `liquidate_into_bids(quantity, bids, *, taker_fee_bps)` walks displayed depth once and returns a
 `DepthLiquidation`; `profitable_bid_liquidation(...)` restricts that to the contiguous depth clearing a net-price

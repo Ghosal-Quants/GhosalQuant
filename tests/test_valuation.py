@@ -11,6 +11,7 @@ from ghosalquant.core.types import (
     OpenOrderView,
     Order,
     OrderBook,
+    PublicTrade,
     Signal,
     SignalType,
     Trade,
@@ -22,7 +23,6 @@ from ghosalquant.portfolio import (
     BasicPortfolio,
     LotLadder,
     PortfolioValuationEngine,
-    ValuationBasis,
     liquidate_into_bids,
     lot_ladders,
     profitable_bid_liquidation,
@@ -124,71 +124,68 @@ def test_profitable_bid_liquidation_stops_at_the_floor():
     assert none_qualify.sellable_quantity == 0.0
 
 
-# ----- A book is never required ----- #
+# ----- Positions without a fresh book ----- #
 
-def test_no_book_falls_back_to_the_mark_and_is_never_zero():
+def test_a_position_without_a_book_counts_at_its_mark_capped_at_cost():
     portfolio = _portfolio([_buy("A", 10.0, 10.0)])
-    engine = PortfolioValuationEngine(taker_fee_bps=10.0)
-    snapshot = engine.snapshot(_at(1), portfolio=portfolio)
+    snapshot = PortfolioValuationEngine(taker_fee_bps=10.0).snapshot(_at(1), portfolio=portfolio)
     valuation = snapshot.symbols[0]
 
-    assert valuation.basis is ValuationBasis.MARKED
-    assert not valuation.has_book
+    assert valuation.book_stale and valuation.book_time_stamp is None
     assert valuation.mark_value == 100.0
     assert valuation.risk_inventory_value == 100.0
-    assert snapshot.risk_equity == 1_000.0
-    assert snapshot.marked_nav == 1_000.0
-    assert snapshot.executable_liquidation_equity == 1_000.0
-    assert not snapshot.fully_executable
-    assert snapshot.marked_symbols == ("A",)
+    assert snapshot.risk_equity == snapshot.marked_nav == 1_000.0
+    assert snapshot.executable_liquidation_equity == 900.0
 
 
-def test_stale_invalidated_and_untradable_books_fall_back_to_the_mark():
+def test_a_position_without_a_book_can_count_as_nothing():
+    portfolio = _portfolio([_buy("A", 10.0, 10.0)])
+    engine = PortfolioValuationEngine(value_unbooked_at_mark=False)
+    assert engine.snapshot(_at(1), portfolio=portfolio).risk_equity == 900.0
+    assert engine.risk_equity(_at(1), portfolio=portfolio) == 900.0
+
+
+def test_stale_invalidated_and_untradable_books_are_not_sold_into():
     portfolio = _portfolio([_buy("A", 10.0, 10.0)])
 
-    stale_engine = PortfolioValuationEngine(stale_after_seconds=30.0)
+    stale_engine = PortfolioValuationEngine(stale_after_seconds=30.0, value_unbooked_at_mark=False)
     stale_engine.observe_book(_book("A", [(9.0, 100.0)], seconds=0))
-    fresh = stale_engine.snapshot(_at(10), portfolio=portfolio)
-    assert fresh.symbols[0].basis is ValuationBasis.EXECUTABLE
+    assert not stale_engine.snapshot(_at(10), portfolio=portfolio).symbols[0].book_stale
     stale = stale_engine.snapshot(_at(100), portfolio=portfolio)
-    assert stale.symbols[0].basis is ValuationBasis.MARKED
-    assert stale.symbols[0].book_stale
-    assert stale.risk_equity == 1_000.0
+    assert stale.symbols[0].book_stale and stale.risk_equity == 900.0
 
     invalidated = PortfolioValuationEngine()
     invalidated.observe_book(_book("A", [(9.0, 100.0)]))
-    invalidated.invalidate_book("A")
-    assert invalidated.snapshot(_at(1), portfolio=portfolio).symbols[0].basis is ValuationBasis.MARKED
+    invalidated.invalidate_book("A", _at(1))
+    assert invalidated.snapshot(_at(1), portfolio=portfolio).symbols[0].book_invalidated
     invalidated.observe_book(_book("A", [(9.0, 100.0)], seconds=2))
-    assert invalidated.snapshot(_at(3), portfolio=portfolio).symbols[0].basis is ValuationBasis.EXECUTABLE
+    assert not invalidated.snapshot(_at(3), portfolio=portfolio).symbols[0].book_stale
 
     halted = PortfolioValuationEngine()
     halted.observe_book(_book("A", [(9.0, 100.0)]))
     halted.set_tradable("A", False)
     marked = halted.snapshot(_at(1), portfolio=portfolio).symbols[0]
-    assert marked.basis is ValuationBasis.MARKED
-    assert not marked.tradable
+    assert marked.book_stale and not marked.tradable
 
 
-def test_require_book_makes_a_missing_book_an_error():
+def test_a_print_after_the_book_invalidates_it_until_a_newer_book():
     portfolio = _portfolio([_buy("A", 10.0, 10.0)])
-    engine = PortfolioValuationEngine(require_book=True)
-    with pytest.raises(ValueError, match="no usable order book"):
-        engine.snapshot(_at(1), portfolio=portfolio)
-
-    engine.observe_book(_book("A", [(9.0, 100.0)]))
-    assert engine.snapshot(_at(1), portfolio=portfolio).fully_executable
-
-
-def test_bar_only_portfolio_is_valued_normally():
-    portfolio = _portfolio([_buy("A", 10.0, 10.0), _buy("B", 5.0, 20.0)])
     engine = PortfolioValuationEngine()
-    snapshot = engine.snapshot(_at(1), portfolio=portfolio)
+    engine.observe_book(_book("A", [(9.0, 100.0)], seconds=5))
 
-    assert snapshot.basis_counts[ValuationBasis.MARKED] == 2
-    assert snapshot.marked_nav == 1_000.0
-    assert snapshot.risk_equity == 1_000.0
-    assert snapshot.risk_equity == snapshot.marked_nav
+    engine.observe_trade(PublicTrade(time_stamp=_at(4), symbol="A", price=9.0, quantity=1.0))
+    assert not engine.snapshot(_at(6), portfolio=portfolio).symbols[0].book_invalidated
+    engine.observe_trade(PublicTrade(time_stamp=_at(6), symbol="A", price=9.0, quantity=1.0))
+    assert engine.snapshot(_at(7), portfolio=portfolio).symbols[0].book_invalidated
+    engine.observe_book(_book("A", [(9.0, 100.0)], seconds=8))
+    assert not engine.snapshot(_at(9), portfolio=portfolio).symbols[0].book_invalidated
+
+
+def test_flat_portfolio_values_to_cash():
+    engine = PortfolioValuationEngine()
+    snapshot = engine.snapshot(_at(1), portfolio=BasicPortfolio(init_capital=500.0))
+    assert snapshot.symbols == ()
+    assert snapshot.risk_equity == snapshot.marked_nav == 500.0
 
 
 # ----- Executable valuation ----- #
@@ -199,12 +196,31 @@ def test_executable_valuation_walks_the_book_and_charges_the_exit_fee():
     engine.observe_book(_book("A", [(9.5, 4.0), (9.0, 6.0)]))
     valuation = engine.snapshot(_at(1), portfolio=portfolio).symbols[0]
 
-    assert valuation.basis is ValuationBasis.EXECUTABLE
     assert valuation.executable_liquidation.sellable_quantity == 10.0
     assert valuation.executable_liquidation.gross_proceeds == pytest.approx(92.0)
     assert valuation.executable_liquidation.exit_fee == pytest.approx(0.92)
     assert valuation.unsold_quantity == 0.0
     assert valuation.executable_pnl_after_exit_fee == pytest.approx(91.08 - 100.0)
+
+
+def test_orders_at_one_price_are_sold_into_as_one_level_in_whole_lots():
+    portfolio = _portfolio([_buy("A", 10.0, 10.0)])
+    engine = PortfolioValuationEngine(lot_size=1.0)
+    engine.observe_book(_book("A", [(9.0, 2.5), (9.0, 1.0), (8.0, 3.0)]))
+    valuation = engine.snapshot(_at(1), portfolio=portfolio).symbols[0]
+
+    assert valuation.external_bids == (BookLevel(9.0, 3.0), BookLevel(8.0, 3.0))
+    assert valuation.executable_liquidation.levels_used == 2
+
+
+def test_depth_comes_from_the_executable_book_and_staleness_from_the_venue_book():
+    portfolio = _portfolio([_buy("A", 10.0, 10.0)])
+    engine = PortfolioValuationEngine(stale_after_seconds=30.0)
+    engine.observe_book(_book("A", [(9.0, 100.0)], seconds=0), _book("A", [(9.0, 4.0)], seconds=0))
+    assert engine.snapshot(_at(1), portfolio=portfolio).symbols[0].executable_liquidation.sellable_quantity == 4.0
+
+    engine.observe_executable_book(_book("A", [(9.0, 7.0)], seconds=40))
+    assert engine.snapshot(_at(35), portfolio=portfolio).symbols[0].book_stale
 
 
 def test_risk_equity_caps_a_position_at_what_it_cost():
@@ -237,6 +253,7 @@ def test_inventory_with_no_bid_to_sell_into_carries_no_risk_value():
     assert valuation.unsold_quantity == 7.0
     assert valuation.risk_inventory_value == pytest.approx(27.0)
     assert valuation.sellable_cost == pytest.approx(30.0)
+    assert valuation.unsold_cost == pytest.approx(70.0)
 
 
 def test_own_resting_bids_are_removed_from_executable_depth():
@@ -252,30 +269,6 @@ def test_own_resting_bids_are_removed_from_executable_depth():
     assert without.own_bid_quantity_removed == 6.0
     assert without.external_bids[0] == BookLevel(9.0, 4.0)
     assert without.executable_liquidation.gross_proceeds == pytest.approx(4 * 9.0 + 6 * 8.0)
-    assert without.indicative_liquidation.gross_proceeds == pytest.approx(10 * 9.0)
-    assert without.basis is ValuationBasis.EXECUTABLE
-
-
-def test_basis_is_indicative_when_own_orders_are_unknown():
-    portfolio = _portfolio([_buy("A", 10.0, 10.0)])
-    engine = PortfolioValuationEngine(books_include_open_orders=True)
-    engine.observe_book(_book("A", [(9.0, 100.0)]))
-    valuation = engine.snapshot(_at(1), portfolio=portfolio).symbols[0]
-
-    assert valuation.basis is ValuationBasis.INDICATIVE
-    assert valuation.has_book
-    assert valuation.own_bid_quantity_removed == 0.0
-
-
-def test_mixed_bases_are_reported():
-    portfolio = _portfolio([_buy("A", 10.0, 10.0), _buy("B", 5.0, 20.0)])
-    engine = PortfolioValuationEngine()
-    engine.observe_book(_book("A", [(9.0, 100.0)]))
-    snapshot = engine.snapshot(_at(1), portfolio=portfolio)
-
-    assert snapshot.basis_counts == {ValuationBasis.EXECUTABLE: 1, ValuationBasis.INDICATIVE: 0, ValuationBasis.MARKED: 1}
-    assert not snapshot.fully_executable
-    assert snapshot.marked_symbols == ("B",)
 
 
 def test_peak_risk_equity_tracks_the_high_water_mark():
@@ -286,18 +279,30 @@ def test_peak_risk_equity_tracks_the_high_water_mark():
     engine.observe_book(_book("A", [(5.0, 100.0)]))
     engine.snapshot(_at(1), portfolio=portfolio)
     assert engine.peak_risk_equity == 1_000.0
+    engine.restart_peak_risk_equity(950.0)
+    assert engine.peak_risk_equity == 950.0
 
     engine.observe_book(_book("A", [(20.0, 100.0)], seconds=2))
     engine.snapshot(_at(2), portfolio=portfolio)
     assert engine.peak_risk_equity == pytest.approx(1_000.0)
-    assert engine.last_snapshot.risk_equity == pytest.approx(1_000.0)
+
+
+def test_an_observational_snapshot_leaves_the_engine_alone():
+    portfolio = _portfolio([_buy("A", 10.0, 10.0)])
+    engine = PortfolioValuationEngine(init_capital=900.0)
+    engine.observe_book(_book("A", [(20.0, 100.0)]))
+    assert engine.observational_snapshot(_at(1), portfolio=portfolio).risk_equity == pytest.approx(1_000.0)
+    assert engine.peak_risk_equity == 900.0 and engine.last_snapshot is None
 
 
 def test_risk_equity_helper_matches_the_snapshot():
-    portfolio = _portfolio([_buy("A", 10.0, 10.0)])
-    engine = PortfolioValuationEngine()
-    engine.observe_book(_book("A", [(9.0, 100.0)]))
-    assert engine.risk_equity(_at(1), portfolio=portfolio) == engine.snapshot(_at(1), portfolio=portfolio).risk_equity
+    portfolio = _portfolio([_buy("A", 10.0, 10.0), _buy("B", 2.0, 30.0)])
+    engine = PortfolioValuationEngine(stale_after_seconds=30.0, value_unbooked_at_mark=False)
+    engine.observe_book(_book("A", [(9.0, 4.0), (8.5, 100.0)]))
+    engine.observe_book(_book("B", [(35.0, 1.0)], seconds=5))
+    for seconds in (1, 20, 32, 40):
+        risk = engine.risk_equity(_at(seconds), portfolio=portfolio)
+        assert risk == pytest.approx(engine.snapshot(_at(seconds), portfolio=portfolio).risk_equity)
 
 
 def test_engine_settings_are_validated():
@@ -306,15 +311,9 @@ def test_engine_settings_are_validated():
     with pytest.raises(ValueError):
         PortfolioValuationEngine(stale_after_seconds=0.0)
     with pytest.raises(ValueError):
+        PortfolioValuationEngine(lot_size=0.0)
+    with pytest.raises(ValueError):
         PortfolioValuationEngine(currency_decimals=-1)
-
-
-def test_flat_portfolio_values_to_cash():
-    engine = PortfolioValuationEngine()
-    snapshot = engine.snapshot(_at(1), portfolio=BasicPortfolio(init_capital=500.0))
-    assert snapshot.symbols == ()
-    assert snapshot.risk_equity == snapshot.marked_nav == 500.0
-    assert snapshot.fully_executable
 
 
 # ----- Attaching the engine changes nothing ----- #
@@ -357,9 +356,7 @@ def test_attaching_the_engine_to_a_bar_run_changes_nothing():
     assert calculate_kpms(without).as_dict() == calculate_kpms(with_engine).as_dict()
     assert [p.equity for p in without.equity_curve] == [p.equity for p in with_engine.equity_curve]
 
-    snapshot = engine.last_snapshot
-    assert snapshot.risk_equity > 0.0
-    assert snapshot.basis_counts[ValuationBasis.MARKED] == len(snapshot.symbols)
+    assert engine.last_snapshot.risk_equity > 0.0
 
 
 # ----- Starting from what the account actually holds ----- #
