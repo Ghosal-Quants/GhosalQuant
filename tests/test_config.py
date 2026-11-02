@@ -298,8 +298,11 @@ def test_the_real_environment_beats_the_dotenv_file(tmp_path, monkeypatch):
     assert load_config(cfg_path).data.alpaca.api_key == "FROMENV"
 
 
-def test_the_polygon_key_can_come_from_the_environment_too(monkeypatch):
+def test_the_polygon_key_can_come_from_the_environment_too(tmp_path, monkeypatch):
     monkeypatch.setenv("POLYGON_API_KEY", "POLYENV")
+    # An empty .env where the search starts, so a real one further up cannot answer for it.
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text("")
     yaml_text = """
 SYSTEM:
   symbols: ["AAPL"]
