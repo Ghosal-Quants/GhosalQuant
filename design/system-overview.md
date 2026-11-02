@@ -143,7 +143,10 @@ A `DataSource` yields `MarketEvent`s: `Bar`s, `OrderBook`s, and `PublicTrade`s i
    feeds it the broker's `CashFlow`s.
 5. Dispatches the event to `on_market_data(bar)`, `on_order_book(book, context)`, or `on_public_trade(trade, context)`
    and passes each resulting `Signal` through the sinks and the `RiskManager`; accepted orders are reported back
-   through `Strategy.on_order_accepted(order, broker_order_id)`.
+   through `Strategy.on_order_accepted(order, broker_order_id)`. An order with `REPLACE_ENTRY_ORDERS` or
+   `REPLACE_EXIT_ORDERS` first cancels the symbol's resting orders on its side. If the venue has not confirmed yet, the
+   order is held and sent on a later event once they have gone, so the old and new orders cannot both fill. A held
+   order is dropped if a replaced order fills, if a newer replacement arrives, or after 30 seconds.
 
 The `RiskContext` and `StrategyContext` for an event are built once, lazily, and shared by every signal it produces.
 

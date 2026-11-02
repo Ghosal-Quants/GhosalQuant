@@ -1,10 +1,23 @@
 import asyncio
 import logging
 import sys
+from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 
+from ..core import metadata_keys
 from ..core.contracts import ContractRegistry, settlement_fills
-from ..core.types import Bar, CashFlow, Fill, MarketEvent, OpenOrderView, Order, OrderBook, PublicTrade, Signal
+from ..core.types import (
+    Bar,
+    CashFlow,
+    Fill,
+    MarketEvent,
+    OpenOrderView,
+    Order,
+    OrderBook,
+    PublicTrade,
+    Signal,
+    SignalType,
+)
 from ..data_layer.datasource_base import DataSource
 from ..execution.context import StrategyContext
 from ..execution.strategy_base import Strategy, as_signal_list
@@ -22,6 +35,16 @@ logger = logging.getLogger(__name__)
 # US equity options stop trading at 16:00 New York, which is 21:00 UTC outside daylight saving.
 DEFAULT_SETTLEMENT_TIME = time(21, 0)
 
+# A replacement held longer than this is a stale decision, so it is dropped.
+REPLACEMENT_MAX_WAIT = timedelta(seconds=30)
+
+
+@dataclass(slots=True)
+class _Replacement:
+    """Orders held back until the resting orders they replace have gone."""
+    cancelling: set[str]
+    orders: list[Order]
+
 
 class _LazyContexts:
     """
@@ -30,13 +53,18 @@ class _LazyContexts:
     per signal would make them the hot path.
     """
 
-    __slots__ = ("_system", "_symbol", "_risk", "_strategy")
+    __slots__ = ("_system", "_symbol", "_risk", "_strategy", "replaced")
 
     def __init__(self, system: "ExecutionSystem", symbol: str) -> None:
         self._system = system
         self._symbol = symbol
         self._risk: RiskContext | None = None
         self._strategy: StrategyContext | None = None
+        self.replaced: set[tuple[str, SignalType]] = set()
+
+    def invalidate(self) -> None:
+        self._risk = None
+        self._strategy = None
 
     @property
     def risk(self) -> RiskContext:
@@ -85,6 +113,7 @@ class ExecutionSystem:
         self._last_snapshot_at: datetime | None = None
         self._last_snapshot_version: int | None = None
         self._last_event_time: datetime | None = None
+        self._replacements: dict[tuple[str, SignalType], _Replacement] = {}
 
         if self.portfolio is not None and self.risk_manager is None:
             raise ValueError("A RiskManager has to be used in combination with a Portfolio.")
@@ -123,6 +152,8 @@ class ExecutionSystem:
                 # Settle last: the position and the underlier price both have to be current.
                 if self.portfolio:
                     await self._settle_expiries(raw.time_stamp)
+
+                self._send_replacements(raw.time_stamp)
 
                 contexts = _LazyContexts(self, raw.symbol)
 
@@ -171,6 +202,7 @@ class ExecutionSystem:
                 continue
             await self.portfolio.process_fill(fill)
             self._note_snapshot(fill.time_stamp)
+            self._drop_replacement_after(fill)
             self._call_hook("on_fill", fill)
         if self.journal is not None:
             self.journal.commit()
@@ -234,8 +266,60 @@ class ExecutionSystem:
         order: Order | None = self.risk_manager.evaluate(signal, contexts.risk)
         if order is None or self.broker is None:
             return
+        if not self._held_for_replacement(order, contexts):
+            self._submit(order)
+
+    def _submit(self, order: Order) -> None:
         broker_order_id = self.broker.submit(order)
         self._call_hook("on_order_accepted", order, broker_order_id)
+
+    def _held_for_replacement(self, order: Order, contexts: _LazyContexts) -> bool:
+        """Cancel the resting orders ``order`` replaces, holding it while the venue still works one."""
+        metadata = order.metadata or {}
+        replaces = metadata.get(metadata_keys.REPLACE_ENTRY_ORDERS) or metadata.get(metadata_keys.REPLACE_EXIT_ORDERS)
+        if not replaces or not isinstance(self.broker, OpenOrderQueries):
+            return False
+
+        key = (order.symbol, order.side)
+        # Only an event's first order for a side cancels, so a ladder keeps all its rungs.
+        if key not in contexts.replaced:
+            contexts.replaced.add(key)
+            self._replacements.pop(key, None)
+            self.broker.cancel_open_orders(symbol=order.symbol, side=order.side)
+            contexts.invalidate()
+            still_working = self._resting_ids(key)
+            if still_working:
+                self._replacements[key] = _Replacement(still_working, [])
+
+        replacement = self._replacements.get(key)
+        if replacement is None:
+            return False
+        replacement.orders.append(order)
+        return True
+
+    def _send_replacements(self, now: datetime) -> None:
+        for key, replacement in list(self._replacements.items()):
+            if now - replacement.orders[0].time_stamp >= REPLACEMENT_MAX_WAIT:
+                logger.warning("Dropping the replacement for %s %s: its cancel is unconfirmed", key[0], key[1].value)
+                del self._replacements[key]
+                continue
+            replacement.cancelling &= self._resting_ids(key)
+            if not replacement.cancelling:
+                del self._replacements[key]
+                for order in replacement.orders:
+                    self._submit(order)
+
+    def _drop_replacement_after(self, fill: Fill) -> None:
+        """A replaced order that fills changes the position the held order was decided on."""
+        key = (fill.symbol, fill.side)
+        replacement = self._replacements.get(key)
+        if replacement is not None and fill.broker_order_id in replacement.cancelling:
+            logger.info("Dropping the replacement for %s %s: a replaced order filled", key[0], key[1].value)
+            del self._replacements[key]
+
+    def _resting_ids(self, key: tuple[str, SignalType]) -> set[str]:
+        symbol, side = key
+        return {view.broker_order_id for view in self._open_order_views(symbol) if view.side is side}
 
     async def _expire_due(self, until: datetime) -> None:
         """

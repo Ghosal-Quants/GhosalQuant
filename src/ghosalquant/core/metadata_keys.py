@@ -10,8 +10,8 @@ Set by strategies on a Signal (copied onto the Order by RiskManager):
 honoured; ``ORDER_SLOT`` is a stable name a strategy uses to find its own resting order;
 ``MAX_QUANTITY`` is the strategy's own size cap; ``RISK_UNIT_COST`` is what one unit costs all in, when
 that is more than the price; ``ALLOCATION_BUCKET`` names the cash bucket the order competes in; ``MAX_ORDER_AGE_SECONDS`` lets a broker expire
-the order; ``REPLACE_ENTRY_ORDERS`` / ``REPLACE_EXIT_ORDERS`` ask for the symbol's resting
-entries / exits to be cancelled first; ``CANCEL_REMAINDER_AFTER_FIRST_FILL`` gives a limit
+the order; ``REPLACE_ENTRY_ORDERS`` / ``REPLACE_EXIT_ORDERS`` cancel the symbol's resting orders on
+the order's side, and the order waits until they have gone; ``CANCEL_REMAINDER_AFTER_FIRST_FILL`` gives a limit
 IOC-like behaviour; ``TARGET_WEIGHT`` is the fraction of equity to hold in the symbol.
 
 Written by the framework: ``CONFIDENCE`` (RiskManager copies ``Signal.confidence``),
