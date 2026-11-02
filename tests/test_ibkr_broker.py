@@ -71,6 +71,9 @@ class FakeIBTrade:
     def remaining(self) -> float:
         return self._remaining
 
+    def filled(self) -> float:
+        return self.order.totalQuantity - self._remaining
+
 
 @dataclass
 class FakeExecution:
@@ -322,8 +325,9 @@ def test_resting_orders_can_be_cancelled_by_symbol_and_side(fake_ib):
     assert broker.cancel_open_orders("AAPL", side=SignalType.BUY) == 1
     assert fake_ib.cancelled == [1]
 
-    assert broker.cancel_open_orders("AAPL") == 2
-    assert fake_ib.cancelled == [1, 1, 2]
+    # Order 1 already has its cancel in flight, so only order 2 is left to cancel.
+    assert broker.cancel_open_orders("AAPL") == 1
+    assert fake_ib.cancelled == [1, 2]
 
 
 def test_submitting_without_a_connection_is_refused(fake_ib, monkeypatch):

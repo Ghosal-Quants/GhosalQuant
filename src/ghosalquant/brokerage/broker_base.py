@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
 
 from ..core import metadata_keys
-from ..core.types import Bar, CashFlow, Fill, MarketEvent, Order, OrderBook, PublicTrade
+from ..core.types import Bar, CashFlow, Fill, Liquidity, MarketEvent, Order, OrderBook, PublicTrade
 
 
 def order_expires_at(order: Order, default_max_age_seconds: float | None = None) -> datetime | None:
@@ -12,6 +12,23 @@ def order_expires_at(order: Order, default_max_age_seconds: float | None = None)
     if max_age is None:
         return None
     return order.time_stamp + timedelta(seconds=max_age)
+
+
+def order_liquidity(order: Order) -> Liquidity:
+    """The liquidity an order declared: the field, else the older metadata key, else a resting maker."""
+    if order.liquidity is not None:
+        return order.liquidity
+    value = (order.metadata or {}).get(metadata_keys.LIQUIDITY)
+    return Liquidity(str(value).lower()) if value is not None else Liquidity.MAKER
+
+
+def order_slot(order: Order) -> str | None:
+    slot = (order.metadata or {}).get(metadata_keys.ORDER_SLOT)
+    return None if slot is None else str(slot)
+
+
+def cancels_remainder_after_first_fill(order: Order) -> bool:
+    return bool((order.metadata or {}).get(metadata_keys.CANCEL_REMAINDER_AFTER_FIRST_FILL))
 
 
 class Broker(ABC):

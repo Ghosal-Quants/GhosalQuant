@@ -1,4 +1,4 @@
-from typing import Protocol, runtime_checkable
+from typing import Iterable, Protocol, runtime_checkable
 
 from ..core.types import OpenOrderView, SignalType
 
@@ -17,6 +17,11 @@ class OpenOrderQueries(Protocol):
         """Resting orders, optionally for one symbol, as read-only views."""
         ...
 
-    def cancel_open_orders(self, symbol: str, side: SignalType | None = None) -> int:
-        """Cancel this symbol's resting orders (optionally one side). Returns how many were cancelled."""
+    def cancel_open_orders(
+        self,
+        symbol: str,
+        side: SignalType | None = None,
+        order_slots: Iterable[str] | None = None,
+    ) -> int:
+        """Cancel this symbol's resting orders (optionally one side or some slots). Returns how many."""
         ...

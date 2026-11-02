@@ -4,10 +4,15 @@ from typing import Iterable
 import heapq
 import random
 
-from .broker_base import Broker, order_expires_at
+from .broker_base import (
+    Broker,
+    cancels_remainder_after_first_fill,
+    order_expires_at,
+    order_liquidity,
+    order_slot,
+)
 from .commissions import CommissionModel, PerShareCommission
 from .fills import FillModel, PlannedFill, RestingOrder, SimulationContext
-from ..core import metadata_keys
 from ..core.types import Bar, Fill, Liquidity, MarketEvent, OpenOrderView, Order, OrderBook, PublicTrade, SignalType
 
 _EPS = 1e-9
@@ -117,7 +122,7 @@ class SimulatedBroker(Broker):
             order=order,
             limit_price=order.declared_limit_price,
             remaining_quantity=float(order.quantity),
-            liquidity=_liquidity(order),
+            liquidity=order_liquidity(order),
             submitted_at=submitted_at,
             eligible_at=submitted_at + timedelta(milliseconds=self._latency_ms()),
             reject_on_eligibility=self._rng.random() < self.reject_probability,
@@ -175,8 +180,7 @@ class SimulatedBroker(Broker):
     def _finished(self, resting: RestingOrder) -> bool:
         if resting.remaining_quantity <= _EPS:
             return True
-        metadata = resting.order.metadata or {}
-        return bool(metadata.get(metadata_keys.CANCEL_REMAINDER_AFTER_FIRST_FILL)) and (
+        return cancels_remainder_after_first_fill(resting.order) and (
             resting.remaining_quantity < float(resting.order.quantity)
         )
 
@@ -245,7 +249,7 @@ class SimulatedBroker(Broker):
         for order_id, resting in self._orders_for(symbol):
             if side is not None and resting.side is not side:
                 continue
-            if slots is not None and _order_slot(resting.order) not in slots:
+            if slots is not None and order_slot(resting.order) not in slots:
                 continue
             self._remove(order_id)
             cancelled += 1
@@ -293,20 +297,6 @@ class SimulatedBroker(Broker):
 
     def _expires_at(self, resting: RestingOrder) -> datetime | None:
         return order_expires_at(resting.order, self.max_order_age_seconds)
-
-
-def _liquidity(order: Order) -> Liquidity:
-    if order.liquidity is not None:
-        return order.liquidity
-    metadata = order.metadata or {}
-    value = metadata.get(metadata_keys.LIQUIDITY)
-    return Liquidity(str(value).lower()) if value is not None else Liquidity.MAKER
-
-
-def _order_slot(order: Order) -> str | None:
-    metadata = order.metadata or {}
-    slot = metadata.get(metadata_keys.ORDER_SLOT)
-    return None if slot is None else str(slot)
 
 
 def _now_like(reference: datetime) -> datetime:

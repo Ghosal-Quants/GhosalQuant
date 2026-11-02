@@ -765,8 +765,9 @@ class Broker(ABC):
 ```
 
 A broker may additionally implement the `OpenOrderQueries` protocol (`ghosalquant.brokerage.open_orders`) —
-`open_order_views(symbol=None)` and `cancel_open_orders(symbol, side=None)` — in which case the `ExecutionSystem`
-fills `StrategyContext.open_orders` and `RiskContext.open_orders` from it. `SimBroker` does.
+`open_order_views(symbol=None)` and `cancel_open_orders(symbol, side=None, order_slots=None)` — in which case the
+`ExecutionSystem` fills `StrategyContext.open_orders` and `RiskContext.open_orders` from it. `SimBroker` and
+`IBKRBroker` do.
 
 ### 9.1 `SimulatedBroker` and its presets
 Simulation is one broker plus a pluggable market model. `SimulatedBroker`
@@ -845,6 +846,12 @@ or Gateway. Supports:
   `MAX_ORDER_AGE_SECONDS`, else the broker's `max_order_age_seconds`). Past that time the order is cancelled at IB
   and `on_order_expired` fires. IB confirms a cancel later, so the order stays in `open_order_views` until then, and
   a fill already on its way still arrives. Without `state_path`, a restart forgets the time to live.
+- Following a simulated broker's other order rules. `Liquidity.TAKER` goes out immediate-or-cancel, because a taker
+  never rests. A maker is a plain limit order: if it crosses it takes, as in simulation. `CANCEL_REMAINDER_AFTER_FIRST_FILL`
+  cancels the rest on the first execution. `max_order_age_events` cancels after that many events for the symbol,
+  counting from zero again after a restart. `cancel_open_orders` takes `order_slots`.
+- Reporting `Fill.liquidity` from IB's `lastLiquidity`.
+- Sending one cancel per order per connection, because `ib_insync` takes any error from IB as the order being cancelled.
 - Commission taken from IB's `commissionReport` rather than left empty.
 - Routing whatever the registry describes: `ib_contract` builds an IBKR `Option` for a symbol registered as one and
   a `Stock` otherwise, and `ib_symbol` names what comes back. An option's IB `symbol` is its *underlier*, so

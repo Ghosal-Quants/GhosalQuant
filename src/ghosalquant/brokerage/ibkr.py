@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Iterator, Mapping
 import hashlib
 import logging
 
@@ -17,10 +17,16 @@ from ib_insync import (
     Contract
 )
 
-from .broker_base import Broker, order_expires_at
+from .broker_base import (
+    Broker,
+    cancels_remainder_after_first_fill,
+    order_expires_at,
+    order_liquidity,
+    order_slot,
+)
 from ..core import metadata_keys
 from ..core.contracts import Contract as TradedContract, ContractRegistry, Right
-from ..core.types import Fill, Liquidity, OpenOrderView, Order, SignalType
+from ..core.types import Fill, Liquidity, MarketEvent, OpenOrderView, Order, SignalType
 from ..state.json_store import StateCodec, VersionedJsonStateStore
 from ..util.config import BrokerMode
 
@@ -47,8 +53,8 @@ class IBKRBroker(Broker):
     record behind: ``indeterminate_orders()`` reports it on the next start instead of the order
     being forgotten or blindly sent again.
 
-    Orders it placed expire on the same rule as a simulated broker's (``order_expires_at``),
-    driven by the ``ExecutionSystem``. Past their time to live they are cancelled at IB.
+    Orders it placed follow a simulated broker's rules. A time to live, an event age or a first
+    fill that asks for it each end in a cancel at IB, and a taker goes out immediate-or-cancel.
     """
 
     def __init__(
@@ -64,10 +70,13 @@ class IBKRBroker(Broker):
             state_path: str | Path | None = None,
             contracts: ContractRegistry | None = None,
             max_order_age_seconds: float | None = None,
+            max_order_age_events: int | None = None,
     ) -> None:
         super().__init__()
         if max_order_age_seconds is not None and max_order_age_seconds <= 0:
             raise ValueError("max_order_age_seconds must be > 0 when set")
+        if max_order_age_events is not None and max_order_age_events <= 0:
+            raise ValueError("max_order_age_events must be > 0 when set")
 
         self.ib = IB()
         self.host = host
@@ -81,6 +90,7 @@ class IBKRBroker(Broker):
         self.contract_map = {c.symbol: c for c in (contract_overrides or [])}
         self.contracts = contracts if contracts is not None else ContractRegistry()
         self.max_order_age_seconds = max_order_age_seconds
+        self.max_order_age_events = max_order_age_events
 
         self._store = (
             None if state_path is None
@@ -90,7 +100,8 @@ class IBKRBroker(Broker):
         )
         self._seen_exec_ids: set[str] = set()
         self._orders_by_id: dict[str, Order] = {}
-        self._expiry_cancels: set[str] = set()
+        self._cancels_sent: set[str] = set()
+        self._event_ages: dict[str, int] = {}
         self._pending: dict[str, dict[str, Any]] = {}
         self._fill_queue: list[Fill] = []
         self._events_wired = False
@@ -107,7 +118,7 @@ class IBKRBroker(Broker):
             clientId=self.client_id
         )
         # A cancel sent on an earlier connection may never have arrived.
-        self._expiry_cancels.clear()
+        self._cancels_sent.clear()
 
         if not self._events_wired:
             self.ib.execDetailsEvent += self._on_exec_details
@@ -128,10 +139,12 @@ class IBKRBroker(Broker):
         )
         action = "BUY" if order.side is SignalType.BUY else "SELL"
         limit = order.declared_limit_price
+        # A taker never rests, so IB cancels whatever it cannot fill at once.
+        tif = "IOC" if order_liquidity(order) is Liquidity.TAKER else ""
         if limit is None:
-            ib_order = MarketOrder(action, float(order.quantity))
+            ib_order = MarketOrder(action, float(order.quantity), tif=tif)
         else:
-            ib_order = LimitOrder(action, float(order.quantity), float(limit))
+            ib_order = LimitOrder(action, float(order.quantity), float(limit), tif=tif)
 
         # Written down before the network call: a lost acknowledgement then leaves a known
         # unknown rather than a forgotten order.
@@ -199,29 +212,47 @@ class IBKRBroker(Broker):
             remaining = float(trade.remaining())
             if remaining <= 0.0:
                 continue
+            order = self._order_for(trade, contract_symbol, remaining)
             views.append(
                 OpenOrderView(
-                    broker_order_id=str(getattr(trade.order, "orderId", "") or ""),
-                    order=self._order_for(trade, contract_symbol, remaining),
+                    broker_order_id=_order_id(trade),
+                    order=order,
                     remaining_quantity=remaining,
                     submitted_at=_trade_time(trade),
                     limit_price=_limit_price(trade),
+                    liquidity=order_liquidity(order),
                 )
             )
         return tuple(views)
 
-    def cancel_open_orders(self, symbol: str, side: SignalType | None = None) -> int:
+    def cancel_open_orders(
+            self,
+            symbol: str,
+            side: SignalType | None = None,
+            order_slots: Iterable[str] | None = None,
+    ) -> int:
+        slots = None if order_slots is None else set(order_slots)
         cancelled = 0
         for trade in self.ib.openTrades():
-            if ib_symbol(trade.contract) != symbol:
+            remaining = float(trade.remaining())
+            if ib_symbol(trade.contract) != symbol or remaining <= 0.0:
                 continue
             if side is not None and _side_of(getattr(trade.order, "action", "")) is not side:
                 continue
-            self.ib.cancelOrder(trade.order)
-            cancelled += 1
+            if slots is not None and order_slot(self._order_for(trade, symbol, remaining)) not in slots:
+                continue
+            if self._cancel(trade):
+                cancelled += 1
         return cancelled
 
     # ----- Order lifecycle ----- #
+    def on_market_event(self, event: MarketEvent) -> MarketEvent:
+        if self.ib.isConnected():
+            # Also catches a part fill that happened while this process was down.
+            self._cancel_remainders(event.symbol)
+            self._age_orders(event.symbol)
+        return super().on_market_event(event)
+
     def next_order_expiry_at(self) -> datetime | None:
         return min((expires_at for _, _, expires_at in self._expiring_trades()), default=None)
 
@@ -235,8 +266,7 @@ class IBKRBroker(Broker):
         expired = []
         for order_id, trade, expires_at in self._expiring_trades():
             if now >= expires_at:
-                self.ib.cancelOrder(trade.order)
-                self._expiry_cancels.add(order_id)
+                self._cancel(trade)
                 expired.append(order_id)
         return expired
 
@@ -268,34 +298,55 @@ class IBKRBroker(Broker):
                 broker_order_id=str(getattr(execution, "orderId", "")) or None,
                 execution_id=exec_id or None,
                 commission=_commission(fill),
+                liquidity=_realised_liquidity(execution),
             )
         )
+        self._cancel_remainders(symbol)
+
+    def _cancel(self, trade: IBTrade) -> bool:
+        """Cancel once per connection: ib_insync takes any error from IB as the order being cancelled."""
+        order_id = _order_id(trade)
+        if order_id in self._cancels_sent:
+            return False
+        self.ib.cancelOrder(trade.order)
+        if order_id:
+            self._cancels_sent.add(order_id)
+        return True
+
+    def _own_working_trades(self, symbol: str | None = None) -> Iterator[tuple[str, IBTrade, Order]]:
+        """Open orders this broker placed. Nothing else on the account is its to cancel."""
+        for trade in self.ib.openTrades():
+            contract_symbol = ib_symbol(trade.contract)
+            if symbol is not None and contract_symbol != symbol:
+                continue
+            order_id = _order_id(trade)
+            order = self._orders_by_id.get(order_id)
+            if order is None or float(trade.remaining()) <= 0.0 or not _describes(order, trade, contract_symbol):
+                continue
+            yield order_id, trade, order
 
     def _expiring_trades(self) -> list[tuple[str, IBTrade, datetime]]:
-        """
-        Open trades with a time to live, and when each runs out.
-
-        Only orders this broker placed: anything else on the account was not given a time to
-        live here. A cancel is sent once per connection, because ib_insync treats an error from
-        IB as the order being cancelled, and a repeat could draw one while the first is pending.
-        """
         if not self.ib.isConnected():
             return []
         expiring = []
-        for trade in self.ib.openTrades():
-            order_id = str(getattr(trade.order, "orderId", "") or "")
-            known = self._orders_by_id.get(order_id)
-            if (
-                known is None
-                or order_id in self._expiry_cancels
-                or float(trade.remaining()) <= 0.0
-                or not _describes(known, trade, ib_symbol(trade.contract))
-            ):
-                continue
-            expires_at = order_expires_at(known, self.max_order_age_seconds)
-            if expires_at is not None:
+        for order_id, trade, order in self._own_working_trades():
+            expires_at = order_expires_at(order, self.max_order_age_seconds)
+            if expires_at is not None and order_id not in self._cancels_sent:
                 expiring.append((order_id, trade, expires_at))
         return expiring
+
+    def _cancel_remainders(self, symbol: str) -> None:
+        for _, trade, order in self._own_working_trades(symbol):
+            if cancels_remainder_after_first_fill(order) and _partly_filled(trade):
+                self._cancel(trade)
+
+    def _age_orders(self, symbol: str) -> None:
+        if self.max_order_age_events is None:
+            return
+        for order_id, trade, _ in self._own_working_trades(symbol):
+            self._event_ages[order_id] = self._event_ages.get(order_id, 0) + 1
+            if self._event_ages[order_id] >= self.max_order_age_events:
+                self._cancel(trade)
 
     def _restore(self) -> None:
         if self._store is None:
@@ -321,7 +372,7 @@ class IBKRBroker(Broker):
 
     def _order_for(self, trade: IBTrade, symbol: str, remaining: float) -> Order:
         """The order we submitted, or one rebuilt from IB for anything this process did not place."""
-        known = self._orders_by_id.get(str(getattr(trade.order, "orderId", "") or ""))
+        known = self._orders_by_id.get(_order_id(trade))
         # IB order ids restart with the session, so only trust a stored one that still describes
         # what the venue reports.
         if known is not None and _describes(known, trade, symbol):
@@ -335,6 +386,16 @@ class IBKRBroker(Broker):
             ref_price=limit if limit else 0.0,
             limit_price=limit,
         )
+
+
+def _order_id(trade: IBTrade) -> str:
+    return str(getattr(trade.order, "orderId", "") or "")
+
+
+def _partly_filled(trade: IBTrade) -> bool:
+    # After a restart IB may report the fill on the order status without its executions.
+    status = getattr(trade, "orderStatus", None)
+    return float(trade.filled()) > 0.0 or float(getattr(status, "filled", 0.0) or 0.0) > 0.0
 
 
 def _describes(order: Order, trade: IBTrade, symbol: str) -> bool:
@@ -413,6 +474,11 @@ def _commission(fill: IBFill) -> float | None:
     report = getattr(fill, "commissionReport", None)
     commission = getattr(report, "commission", None)
     return None if commission is None else float(commission)
+
+
+def _realised_liquidity(execution: Any) -> Liquidity | None:
+    # IB's lastLiquidity: 1 added, 2 removed, 3 routed out to another venue.
+    return {1: Liquidity.MAKER, 2: Liquidity.TAKER, 3: Liquidity.TAKER}.get(getattr(execution, "lastLiquidity", 0))
 
 
 def _limit_price(trade: IBTrade) -> float | None:
