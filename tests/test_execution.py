@@ -1,11 +1,19 @@
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 
-from data_layer.list_datasource import ListDataSource
-from execution.execution_system import ExecutionSystem
-from example_strategy import ExampleStrategy
-from core.types import SignalType, Signal, Bar
-from execution.sinks import ListSink
+import pytest
+
+from ghosalquant.bench.benchmark_trend_vol_target import BenchmarkTrendVolTarget
+from ghosalquant.data_layer.list_datasource import ListDataSource
+from ghosalquant.portfolio.basic_portfolio import BasicPortfolio
+from ghosalquant.brokerage.simulated import SimBroker
+from ghosalquant.execution.execution_system import ExecutionSystem
+from examples.example_strategy import ExampleStrategy
+from ghosalquant.core.types import SignalType, Signal, Bar, CashFlow, Order
+from ghosalquant.execution.sinks import ListSink
+from ghosalquant.risk.risk_manager import RiskManager
+from ghosalquant.risk.rules.rule_max_open_positions import MaxOpenPositions
+from ghosalquant.risk.types import OrderDraft, RiskContext
 
 
 # Helper function
@@ -13,9 +21,69 @@ def _bar(timestamp: str, **kwargs) -> Bar:
     return Bar(time_stamp=datetime.fromisoformat(timestamp), **kwargs)
 
 
+def _order(timestamp: str, **kwargs) -> Order:
+    return Order(time_stamp=datetime.fromisoformat(timestamp), **kwargs)
+
+
+class RecordingSimBroker(SimBroker):
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.submitted_orders: list[Order] = []
+
+    def submit(self, order: Order) -> str:
+        self.submitted_orders.append(order)
+        return super().submit(order)
+
+
+class CaptureContextRule:
+    def __init__(self) -> None:
+        self.contexts: list[RiskContext] = []
+
+    def apply(self, _draft: OrderDraft, context: RiskContext) -> bool:
+        self.contexts.append(RiskContext(
+            open_positions=context.open_positions,
+            open_qty_by_symbol=dict(context.open_qty_by_symbol),
+            current_drawdown=context.current_drawdown,
+            peak_equity=context.peak_equity,
+            price_history=(
+                {symbol: list(prices) for symbol, prices in context.price_history.items()}
+                if context.price_history is not None else None
+            ),
+        ))
+        return True
+
+
+class BuyOnBarsStrategy:
+    def __init__(self, buy_bar_indexes: list[int], quantity: float) -> None:
+        self._buy_bar_indexes = set(buy_bar_indexes)
+        self._quantity = quantity
+        self._bar_index = -1
+
+    def on_start(self) -> None:
+        return None
+
+    def on_end(self) -> None:
+        return None
+
+    def on_market_data(self, bar: Bar) -> Signal | None:
+        self._bar_index += 1
+        if self._bar_index not in self._buy_bar_indexes:
+            return None
+
+        return Signal(
+            time_stamp=bar.time_stamp,
+            symbol=bar.symbol,
+            signal_type=SignalType.BUY,
+            ref_price=bar.close,
+            confidence=1.0,
+            quantity=self._quantity,
+        )
+
+
 def test_chain_sinks():
     bars: list[Bar] = [
-        _bar("2025-11-15 09:00:00", symbol="TEST", open=100.0, high=101.1, low=100.0, close=100.8, volume=1000)
+        _bar("2025-11-15 09:00:00", symbol="TEST", open=100.0, high=101.1, low=100.0, close=100.8, volume=1000),
+        _bar("2025-11-15 09:01:00", symbol="TEST", open=100.8, high=101.1, low=100.0, close=99.1, volume=1000)
     ]
 
     list_sink: ListSink = ListSink()
@@ -24,14 +92,13 @@ def test_chain_sinks():
         data_src=ListDataSource(bars=bars),
         strategy=ExampleStrategy(),
         signal_destination=ListSink(next_sink=ListSink(next_sink=ListSink(next_sink=list_sink))),
-        ignore_noop_signals=False
     )
 
     # Apply strategy
     asyncio.run(execution.run())
 
     assert len(list_sink.get_signals()) == 1
-    assert list_sink.get_signals()[0].signal_type == SignalType.NOOP
+    assert list_sink.get_signals()[0].signal_type is SignalType.BUY
 
 
 def test_execute_strategy():
@@ -55,7 +122,6 @@ def test_execute_strategy():
         data_src=ListDataSource(bars=bars),
         strategy=ExampleStrategy(),
         signal_destination=list_sink,
-        ignore_noop_signals=False
     )
 
     # Assert the buy and sells exist in the updated df
@@ -73,7 +139,6 @@ def test_execute_strategy():
     asyncio.run(execution.run())
 
     expected_signal_types = [
-        SignalType.NOOP.value,
         SignalType.SELL.value,
         SignalType.BUY.value,
         SignalType.SELL.value,
@@ -89,3 +154,276 @@ def test_execute_strategy():
     for signal in list_sink.get_signals():
         assert signal.signal_type.value == expected_signal_types[i]
         i += 1
+
+
+def test_sim_broker_waits_for_next_bar_and_uses_bar_open():
+    broker = SimBroker(
+        spread_bps=0.0,
+        slippage_mean_bps=0.0,
+        slippage_std_bps=0.0,
+        impact_bps_at_full_participation=0.0,
+        max_fill_pct_of_bar_volume=1.0,
+        seed=7,
+    )
+    entry_bar = _bar(
+        "2025-11-15 09:00:00",
+        symbol="TEST",
+        open=100.0,
+        high=101.0,
+        low=99.5,
+        close=100.5,
+        volume=1000,
+    )
+    fill_bar = _bar(
+        "2025-11-15 09:05:00",
+        symbol="TEST",
+        open=101.25,
+        high=102.0,
+        low=101.0,
+        close=101.5,
+        volume=1000,
+    )
+
+    broker.on_bar(entry_bar)
+    broker.submit(
+        _order(
+            "2025-11-15 09:00:00",
+            symbol="TEST",
+            side=SignalType.BUY,
+            quantity=10.0,
+            ref_price=entry_bar.close,
+        )
+    )
+
+    assert broker.get_fills() == []
+
+    broker.on_bar(fill_bar)
+    fills = broker.get_fills()
+
+    assert len(fills) == 1
+    assert fills[0].quantity == 10.0
+    assert fills[0].price == fill_bar.open
+    assert fills[0].time_stamp == fill_bar.time_stamp
+
+
+def test_sim_broker_caps_fill_size_by_bar_volume():
+    broker = SimBroker(
+        spread_bps=0.0,
+        slippage_mean_bps=0.0,
+        slippage_std_bps=0.0,
+        impact_bps_at_full_participation=0.0,
+        partial_fill_probability=0.0,
+        max_fill_pct_of_bar_volume=0.10,
+        seed=11,
+    )
+    entry_bar = _bar(
+        "2025-11-15 09:00:00",
+        symbol="TEST",
+        open=100.0,
+        high=100.5,
+        low=99.5,
+        close=100.0,
+        volume=1000,
+    )
+    first_fill_bar = _bar(
+        "2025-11-15 09:05:00",
+        symbol="TEST",
+        open=100.5,
+        high=101.0,
+        low=100.0,
+        close=100.8,
+        volume=1000,
+    )
+    second_fill_bar = _bar(
+        "2025-11-15 09:10:00",
+        symbol="TEST",
+        open=100.8,
+        high=101.2,
+        low=100.6,
+        close=101.0,
+        volume=1000,
+    )
+
+    broker.on_bar(entry_bar)
+    broker.submit(
+        _order(
+            "2025-11-15 09:00:00",
+            symbol="TEST",
+            side=SignalType.BUY,
+            quantity=150.0,
+            ref_price=entry_bar.close,
+        )
+    )
+
+    broker.on_bar(first_fill_bar)
+    first_fills = broker.get_fills()
+    assert len(first_fills) == 1
+    assert first_fills[0].quantity == 100.0
+    assert first_fills[0].price == first_fill_bar.open
+
+    broker.on_bar(second_fill_bar)
+    second_fills = broker.get_fills()
+    assert len(second_fills) == 1
+    assert second_fills[0].quantity == 50.0
+    assert second_fills[0].price == second_fill_bar.open
+
+
+def test_execution_builds_risk_context_from_portfolio_and_price_history():
+    bars: list[Bar] = [
+        _bar("2025-11-15 09:00:00", symbol="TEST", open=100.0, high=100.0, low=100.0, close=100.0, volume=1000),
+        _bar("2025-11-15 09:05:00", symbol="TEST", open=100.0, high=100.0, low=100.0, close=100.0, volume=1000),
+        _bar("2025-11-15 09:10:00", symbol="TEST", open=80.0, high=80.0, low=80.0, close=80.0, volume=1000),
+    ]
+    capture_rule = CaptureContextRule()
+    broker = RecordingSimBroker(
+        spread_bps=0.0,
+        slippage_mean_bps=0.0,
+        slippage_std_bps=0.0,
+        impact_bps_at_full_participation=0.0,
+        max_fill_pct_of_bar_volume=1.0,
+        seed=17,
+    )
+    execution = ExecutionSystem(
+        data_src=ListDataSource(bars=bars),
+        strategy=BuyOnBarsStrategy(buy_bar_indexes=[0, 2], quantity=50.0),
+        risk_manager=RiskManager(rules=[
+            capture_rule,
+            MaxOpenPositions(max_open_positions=1),
+        ]),
+        portfolio=BasicPortfolio(init_capital=10_000.0),
+        broker=broker,
+    )
+
+    asyncio.run(execution.run())
+
+    assert len(capture_rule.contexts) == 2
+    # The second buy adds to TEST, which is already held.
+    assert len(broker.submitted_orders) == 2
+
+    first_context = capture_rule.contexts[0]
+    assert first_context.open_positions == 0
+    assert first_context.open_qty_by_symbol == {}
+    assert first_context.peak_equity == 10_000.0
+    assert first_context.current_drawdown == 0.0
+    assert first_context.price_history == {"TEST": [100.0]}
+
+    second_context = capture_rule.contexts[1]
+    assert second_context.open_positions == 1
+    assert second_context.open_qty_by_symbol == {"TEST": 50.0}
+    assert second_context.peak_equity == 10_000.0
+    assert second_context.price_history == {"TEST": [100.0, 100.0, 80.0]}
+    assert second_context.current_drawdown is not None
+    assert abs(second_context.current_drawdown - (-0.1)) < 1e-12
+
+
+class FundedSimBroker(SimBroker):
+    """Charges 0.5 a unit held as funding on every bar after the fill."""
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.held = 0.0
+        self.flows: list[CashFlow] = []
+
+    def on_bar(self, bar: Bar) -> None:
+        if self.held:
+            self.flows.append(CashFlow(bar.time_stamp, bar.symbol, -0.5 * self.held, "funding"))
+        super().on_bar(bar)
+
+    def get_fills(self):
+        fills = super().get_fills()
+        self.held += sum(fill.quantity for fill in fills)
+        return fills
+
+    def get_cash_flows(self) -> list[CashFlow]:
+        flows, self.flows = self.flows, []
+        return flows
+
+
+def test_venue_cash_flows_are_booked_as_realised_pnl():
+    bars = [
+        _bar("2025-11-15 09:00:00", symbol="TEST", open=100.0, high=100.0, low=100.0, close=100.0, volume=1000),
+        _bar("2025-11-15 09:05:00", symbol="TEST", open=100.0, high=100.0, low=100.0, close=100.0, volume=1000),
+        _bar("2025-11-15 09:10:00", symbol="TEST", open=100.0, high=100.0, low=100.0, close=100.0, volume=1000),
+        _bar("2025-11-15 09:15:00", symbol="TEST", open=100.0, high=100.0, low=100.0, close=100.0, volume=1000),
+    ]
+    broker = FundedSimBroker(
+        spread_bps=0.0,
+        slippage_mean_bps=0.0,
+        slippage_std_bps=0.0,
+        impact_bps_at_full_participation=0.0,
+        max_fill_pct_of_bar_volume=1.0,
+        seed=7,
+    )
+    portfolio = BasicPortfolio(init_capital=1_000.0)
+    execution = ExecutionSystem(
+        data_src=ListDataSource(bars=bars),
+        strategy=BuyOnBarsStrategy([0], quantity=2.0),
+        risk_manager=RiskManager(rules=[]),
+        portfolio=portfolio,
+        broker=broker,
+    )
+
+    asyncio.run(execution.run())
+
+    # Filled on the second bar, then charged on the third and fourth.
+    assert portfolio.cash_flows == -2.0
+    assert portfolio.realised_pnl == portfolio.cash_flows - portfolio.fees_paid
+    assert portfolio.current_equity == 1_000.0 - 2.0 - portfolio.fees_paid
+
+
+def test_benchmark_trend_vol_target_rejects_multi_symbol_stream():
+    strategy = BenchmarkTrendVolTarget()
+
+    first_bar = _bar(
+        "2025-11-15 09:00:00",
+        symbol="AAA",
+        open=100.0,
+        high=101.0,
+        low=99.0,
+        close=100.0,
+        volume=1000.0,
+    )
+    second_bar = _bar(
+        "2025-11-15 09:05:00",
+        symbol="BBB",
+        open=100.0,
+        high=101.0,
+        low=99.0,
+        close=100.5,
+        volume=1000.0,
+    )
+
+    assert strategy.on_market_data(first_bar) is None
+
+    with pytest.raises(ValueError, match="single-symbol only"):
+        strategy.on_market_data(second_bar)
+
+
+def test_benchmark_trend_vol_target_emits_target_weight_signal():
+    strategy = BenchmarkTrendVolTarget()
+    signal: Signal | None = None
+    warm_signals: list[Signal] = []
+    start_time = datetime.fromisoformat("2025-11-15 09:00:00")
+
+    for i in range(80):
+        close = 100.0 * (1.001 ** i)
+        bar = _bar(
+            (start_time + timedelta(minutes=i)).isoformat(sep=" "),
+            symbol="AAA",
+            open=close * 0.999,
+            high=close * 1.001,
+            low=close * 0.998,
+            close=close,
+            volume=1000.0,
+        )
+        next_signal = strategy.on_market_data(bar)
+        if next_signal is not None:
+            signal = next_signal
+            if i >= 70:
+                warm_signals.append(next_signal)
+
+    assert signal is not None
+    assert signal.quantity is None
+    assert signal.metadata is not None
+    assert signal.metadata["target_weight"] > 0.0
+    assert len(warm_signals) >= 5

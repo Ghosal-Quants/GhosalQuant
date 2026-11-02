@@ -1,0 +1,408 @@
+"""
+Static Data Updater for Polygon.io aggregates
+
+Updates local Parquet stores from a watchlist stored in `following.parquet`.
+
+Current scope (per user spec):
+- Handle only **stocks** and **options** for now (futures & treasury left for later).
+- Route by `type` column in following.parquet to the correct endpoint.
+- Store updates into the *main* Parquet (schema flattened to just what we care about: ticker + bar fields).
+- If a ticker already exists in the Parquet, fetch from its last timestamp+1ms to (now - 15 minutes).
+  Otherwise, fetch from (now - 2 years + 1 day) to (now - 15 minutes).
+
+Main Parquet schema (flattened):
+    ticker, t, o, h, l, c, v, n, vw
+Where fields mirror Polygon `results` objects:
+    c=close, h=high, l=low, n=number of transactions, o=open, t=unix ms, v=volume, vw=vol-weighted avg price
+
+Environment:
+- Requires POLYGON_API_KEY in environment variables.
+- Uses pandas + pyarrow for Parquet IO; `requests` for HTTP.
+
+Usage (run from repo root or adjust paths via env):
+    python -m data_layer.staticUpdater
+
+You can override defaults with env vars:
+    FOLLOWING_PARQUET   -> path to following.parquet (default: data_layer/following.parquet)
+    MAIN_PARQUET        -> path to main.parquet (default: data_layer/main.parquet)
+    AGG_MULTIPLIER      -> e.g. "1" (default: 1)
+    AGG_TIMESPAN        -> e.g. "minute" (default: minute)
+    START_LOOKBACK_DAYS -> integer days to look back for new tickers (default: 365*2 + 1)
+
+Notes:
+- The script will gracefully skip unknown types for now (e.g., futures, treasury) but logs them.
+- Designed to be idempotent: de-duplicates on (ticker, t).
+"""
+from __future__ import annotations
+
+import os
+import sys
+import time
+import logging
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Dict, Iterable, List, Optional, Tuple
+
+import pandas as pd
+import requests
+
+from dotenv import load_dotenv
+load_dotenv()
+
+from ..util.config import StaticDataConfig
+
+# ---------------------------
+# Configuration
+# ---------------------------
+API_BASE = "https://api.polygon.io"
+API_KEY = os.environ.get("POLYGON_API_KEY", "")
+
+# Paths and aggregation come from DATA.static.
+HERE = Path(__file__).resolve().parent
+DATA_DIR = HERE / "data"
+
+SETTINGS = StaticDataConfig()
+FOLLOWING_PARQUET = SETTINGS.following_parquet
+MAIN_PARQUET = SETTINGS.main_parquet
+# One-minute bars are the canonical resolution; 5m and 15m are derived from these.
+AGG_MULTIPLIER = SETTINGS.agg_multiplier
+AGG_TIMESPAN = SETTINGS.agg_timespan
+START_LOOKBACK_DAYS = SETTINGS.start_lookback_days
+
+
+def configure(settings: StaticDataConfig) -> None:
+    """Point this module at a configured dataset instead of the defaults."""
+    global SETTINGS, FOLLOWING_PARQUET, MAIN_PARQUET
+    global AGG_MULTIPLIER, AGG_TIMESPAN, START_LOOKBACK_DAYS
+    SETTINGS = settings
+    FOLLOWING_PARQUET = settings.following_parquet
+    MAIN_PARQUET = settings.main_parquet
+    AGG_MULTIPLIER = settings.agg_multiplier
+    AGG_TIMESPAN = settings.agg_timespan
+    START_LOOKBACK_DAYS = settings.start_lookback_days
+
+# Rate limiting / retry
+MAX_RETRIES = 5
+BACKOFF_BASE_SEC = 1.25
+
+
+# ---------------------------
+# Logging
+# ---------------------------
+logger = logging.getLogger("staticUpdater")
+if not logger.handlers:
+    handler = logging.StreamHandler(sys.stdout)
+    fmt = logging.Formatter("%(asctime)s | %(levelname)s | %(message)s")
+    handler.setFormatter(fmt)
+    logger.addHandler(handler)
+logger.setLevel(logging.INFO)
+
+
+# ---------------------------
+# Helpers
+# ---------------------------
+
+def _now_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _format_date(dt: datetime) -> str:
+    """Polygon accepts ISO dates (YYYY-MM-DD) or ms-since-epoch. We'll pass ISO dates for readability."""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.strftime("%Y-%m-%d")
+
+
+def _coerce_following_types(val: str) -> str:
+    """Normalize the `type` column to routing keys we understand."""
+    if not isinstance(val, str):
+        return "unknown"
+    v = val.strip().lower()
+    if v in {"stock", "stocks", "equity", "equities"}:
+        return "stocks"
+    if v in {"option", "options"}:
+        return "options"
+    if v in {"future", "futures"}:
+        return "futures"
+    if v in {"treasury", "bond", "bonds"}:
+        return "treasury"
+    return "unknown"
+
+
+def _aggs_url(ticker: str, route_type: str, start: datetime, end: datetime) -> str:
+    # For stocks, options and indexes we can use the same path format under /v2/aggs
+    return (
+        f"{API_BASE}/v2/aggs/ticker/{ticker}/range/{AGG_MULTIPLIER}/"
+        f"{AGG_TIMESPAN}/{_format_date(start)}/{_format_date(end)}"
+    )
+
+
+def _http_get(url: str, params: Optional[Dict] = None) -> requests.Response:
+    if not API_KEY:
+        raise RuntimeError("POLYGON_API_KEY environment variable is required.")
+    if params is None:
+        params = {}
+    params = {**params, "apiKey": API_KEY}
+
+    last_err: Optional[Exception] = None
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            resp = requests.get(url, params=params, timeout=30)
+            if resp.status_code == 429:
+                wait = BACKOFF_BASE_SEC * (2 ** (attempt - 1))
+                logger.warning(
+                    "429 Too Many Requests — backing off %.2fs (attempt %d/%d)",
+                    wait, attempt, MAX_RETRIES
+                )
+                time.sleep(wait)
+                continue
+            resp.raise_for_status()
+            return resp
+        except requests.RequestException as e:
+            last_err = e
+            wait = BACKOFF_BASE_SEC * (2 ** (attempt - 1))
+            logger.warning(
+                "HTTP error (%s) — retrying in %.2fs (attempt %d/%d)",
+                getattr(e, "__class__", type(e)).__name__,
+                wait,
+                MAX_RETRIES,
+            )
+            time.sleep(wait)
+
+    assert last_err is not None
+    raise last_err
+
+
+def _iterate_aggs(
+    ticker: str,
+    route_type: str,
+    start: datetime,
+    end: datetime,
+    adjusted: bool = True,
+) -> Iterable[Dict]:
+    """Yield Polygon aggregate bars for the range, handling pagination."""
+    url = _aggs_url(ticker, route_type, start, end)
+    params = {
+        "adjusted": str(adjusted).lower(),
+        "limit": 50000,
+        "sort": "asc",
+    }
+
+    while True:
+        resp = _http_get(url, params=params)
+        data = resp.json()
+
+        if data.get("status") not in {"OK", "ok", "success"} and "results" not in data:
+            logger.info(
+                "No data or non-OK status for %s (%s): %s",
+                ticker,
+                route_type,
+                data.get("status"),
+            )
+            break
+
+        results = data.get("results") or []
+        for row in results:
+            row.setdefault("T", None)
+            yield {
+                "ticker": row.get("T") or data.get("ticker") or ticker,
+                "t": row.get("t"),
+                "o": row.get("o"),
+                "h": row.get("h"),
+                "l": row.get("l"),
+                "c": row.get("c"),
+                "v": row.get("v"),
+                "n": row.get("n"),
+                "vw": row.get("vw"),
+            }
+
+        next_url = data.get("next_url") or data.get("nextUrl")
+        next_cursor = (
+            data.get("next_cursor")
+            or data.get("nextPageToken")
+            or data.get("next_page_token")
+        )
+
+        if next_url:
+            url = next_url
+            params = {"apiKey": API_KEY}
+            continue
+        if next_cursor:
+            params = {
+                "adjusted": str(adjusted).lower(),
+                "limit": 50000,
+                "sort": "asc",
+                "cursor": next_cursor,
+            }
+            continue
+        break
+
+
+def _load_parquet(path: str) -> pd.DataFrame:
+    if not os.path.exists(path):
+        return pd.DataFrame(
+            columns=["ticker", "t", "o", "h", "l", "c", "v", "n", "vw"]
+        ).astype(
+            {
+                "ticker": "string",
+                "t": "Int64",
+                "o": "float64",
+                "h": "float64",
+                "l": "float64",
+                "c": "float64",
+                "v": "float64",
+                "n": "float64",
+                "vw": "float64",
+            }
+        )
+    return pd.read_parquet(path)
+
+
+def _save_parquet(df: pd.DataFrame, path: str) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    if not df.empty:
+        df = df.sort_values(["ticker", "t"])
+    df.to_parquet(path, index=False)
+
+
+def _get_last_timestamp_from_parquet(path: str, ticker: str) -> Optional[int]:
+    """Return max 't' for a ticker using a filtered read (pyarrow engine), or None if absent."""
+    if not os.path.exists(path):
+        return None
+    try:
+        df = pd.read_parquet(
+            path, columns=["t", "ticker"], filters=[("ticker", "=", ticker)]
+        )
+        if df.empty:
+            return None
+        return int(df["t"].max())
+    except Exception:
+        df = pd.read_parquet(path, columns=["t", "ticker"])
+        df = df[df["ticker"] == ticker]
+        if df.empty:
+            return None
+        return int(df["t"].max())
+
+
+def _append_rows_to_main(add_df: pd.DataFrame, path: str) -> None:
+    """Append rows to main parquet with de-dupe on (ticker, t)."""
+    if add_df is None or add_df.empty:
+        return
+    if os.path.exists(path):
+        existing = pd.read_parquet(path)
+        combined = pd.concat([existing, add_df], ignore_index=True)
+        combined = combined.drop_duplicates(
+            subset=["ticker", "t"], keep="last"
+        ).sort_values(["ticker", "t"])
+        _save_parquet(combined, path)
+        del existing, combined
+    else:
+        _save_parquet(add_df.sort_values(["ticker", "t"]), path)
+
+
+def _compute_time_window(ticker: str) -> Tuple[datetime, datetime]:
+    now = _now_utc()
+    end = now - timedelta(minutes=15)
+    last_t_ms = _get_last_timestamp_from_parquet(MAIN_PARQUET, ticker)
+    if last_t_ms is not None:
+        start = datetime.fromtimestamp(
+            (last_t_ms + 1) / 1000.0, tz=timezone.utc
+        )
+    else:
+        start = end - timedelta(days=START_LOOKBACK_DAYS)
+    return (start, end)
+
+
+def _route_supported(route_type: str) -> bool:
+    return route_type in {"stocks", "options"}
+
+
+def update_main_from_following():
+    # Load the following list
+    if not os.path.exists(FOLLOWING_PARQUET):
+        raise FileNotFoundError(f"following.parquet not found at: {FOLLOWING_PARQUET}")
+
+    following = pd.read_parquet(FOLLOWING_PARQUET)
+    if not {"ticker", "type"}.issubset(following.columns):
+        raise ValueError("following.parquet must contain columns: 'ticker' and 'type'")
+
+    following = following.copy()
+    following["type"] = following["type"].map(_coerce_following_types)
+
+    total_downloaded = 0
+    total_skipped = 0
+
+    for _, row in following.iterrows():
+        raw_ticker = str(row["ticker"]).strip()
+        route = row["type"]
+
+        if not _route_supported(route):
+            logger.info(
+                "Skipping %s (%s) — not in current scope.", raw_ticker, route
+            )
+            total_skipped += 1
+            continue
+
+        start, end = _compute_time_window(raw_ticker)
+        if start >= end:
+            logger.info(
+                "Up to date for %s — start >= end (%s >= %s)",
+                raw_ticker,
+                start,
+                end,
+            )
+            total_skipped += 1
+            continue
+
+        logger.info(
+            "Fetching %s %s from %s to %s (multiplier=%s, timespan=%s)",
+            route,
+            raw_ticker,
+            start.date(),
+            end.date(),
+            AGG_MULTIPLIER,
+            AGG_TIMESPAN,
+        )
+
+        rows: List[Dict] = []
+        for bar in _iterate_aggs(raw_ticker, route, start, end, adjusted=True):
+            if bar.get("t") is None:
+                continue
+            rows.append(bar)
+
+        if not rows:
+            logger.info("No new bars for %s", raw_ticker)
+            total_skipped += 1
+            continue
+
+        add_df = pd.DataFrame.from_records(rows)
+        add_df = add_df.dropna(subset=["t"]).astype({"t": "int64"})
+
+        before = len(add_df)
+        add_df = add_df.drop_duplicates(subset=["ticker", "t"], keep="last")
+        after = len(add_df)
+        if before != after:
+            logger.info(
+                "Deduped %d duplicate bars within batch for %s",
+                before - after,
+                raw_ticker,
+            )
+
+        _append_rows_to_main(add_df, MAIN_PARQUET)
+        total_downloaded += len(add_df)
+        logger.info("Appended %d bars for %s (flushed)", len(add_df), raw_ticker)
+        del add_df
+
+    logger.info(
+        "Done. Downloaded %d new bars. Skipped %d entries.",
+        total_downloaded,
+        total_skipped,
+    )
+
+
+if __name__ == "__main__":
+    try:
+        update_main_from_following()
+    except Exception as e:
+        logger.exception("Updater failed: %s", e)
+        sys.exit(1)

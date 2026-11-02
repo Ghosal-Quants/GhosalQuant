@@ -14,3 +14,9 @@ requests
 widgetsnbextension
 yfinance
 PyYAML
+dotenv
+customtkinter
+pyarrow
+fastparquet
+ib_insync
+websockets

@@ -3,24 +3,119 @@
 # ------------------------------------------------
 SYSTEM:
   # The location of the historical data files
-  target: "AAPL"
-  # The timeframe for the main data (e.g., H1, M30, D1)
-  main_timeframe: "H1"
-  # The timeframe for execution/signal checks (e.g., M5)
-  execution_timeframe: "M5"
+  symbols: ["NVDA", "SPY"]
+  # The timeframe for the main data (e.g., 1H, 30Min, 1D)
+  main_timeframe: "1D"
+  # The timeframe for signal evaluation (e.g., 5Min) (if using Parquet, must be >= base_resolution)
+  execution_timeframe: "5Min"
   # Use multiprocessing for faster testing
   # use_multiprocessing: True
   # Number of CPU cores to dedicate to the process
   # num_processes: 4
   # do we want fresh candles downloaded?
-  fresh_candles: True
+  fresh_candles: False
+
+  # Use the built-in risk manager
+  use_risk_manager: True
+
+# ------------------------------------------------
+# Data Source Configuration
+# ------------------------------------------------
+DATA:
+  source: "yfinance" # Options: "polygon", "yfinance", "live_ibkr", "live_alpaca"
+  # Which market events the source yields: "bars" (default), plus "order_books" and "trades" for live_ibkr.
+  events: ["bars"]
+  # Only the section specified in the "source" field will be used. The other section will be ignored.
+  polygon:
+    # api_key is not accepted here: it comes from POLYGON_API_KEY in .env. See .env.example.
+    parquet_path: "src/ghosalquant/data_layer/data/main.parquet"
+    base_resolution: "1Min"
+  yfinance: {} # Currently no config options for yfinance, but this section may be expanded in future
+  # Where the downloaded parquet datasets live, and what the Polygon downloader asks for. All
+  # optional; the defaults sit beside the code, so where you run from does not decide which file
+  # gets written.
+  # static:
+  #   following_parquet: "src/ghosalquant/data_layer/data/following.parquet"
+  #   main_parquet: "src/ghosalquant/data_layer/data/main.parquet"
+  #   futures_parquet: "src/ghosalquant/data_layer/data/futures.parquet"
+  #   treasury_parquet: "src/ghosalquant/data_layer/data/treasury.parquet"
+  #   agg_multiplier: 1          # one-minute bars are canonical; coarser ones derive from them
+  #   agg_timespan: "minute"
+  #   start_lookback_days: 731   # how far back a newly followed ticker is fetched
+  # To switch to Alpaca live market data, change `source` to `live_alpaca` and use the block
+  # below. Needs the optional SDK: pip install "ghosalquant[alpaca]"
+  # alpaca:
+  #   # api_key and api_secret are not accepted here: they come from ALPACA_API_KEY and
+  #   # ALPACA_API_SECRET in .env. See .env.example.
+  #   endpoint: "https://paper-api.alpaca.markets"   # paper; drop the "paper-" for real money
+  #   feed: "iex"        # iex (free) | sip | delayed_sip, or opra | indicative for options
+  #   # DATA.events: "order_books" is Alpaca's quote channel, which is top of book only, so a
+  #   # book has one level a side. The option feeds carry quotes and trades but no bars.
+
+  # To switch to IBKR live market data, change `source` to `live_ibkr` and use the block below.
+  # live_ibkr:
+  #   host: "127.0.0.1"
+  #   port: 7497
+  #   client_id: 2
+  #   bar_resolution_sec: 1
+  #   depth: 5                 # market-depth rows per side when events includes "order_books"
+  #   book_resolution_sec: 0   # emit at most one OrderBook per symbol this often (0 = every update)
 
 # ------------------------------------------------
 # Test Period and Range
 # ------------------------------------------------
 TIME_RANGE:
-  start_date: "2023-01-01"
-  end_date: "2024-06-30"
+  start_date: "2024-01-01"
+  end_date: "2025-12-31"
   # Time window for daily trading (e.g., 9:00 to 17:00 UTC)
   session_start_time: "09:00"
   session_end_time: "17:00"
+
+# ------------------------------------------------
+# Risk Manager (Only applicable if SYSTEM.use_risk_manager is True)
+# ------------------------------------------------
+RISK:
+  rules:
+    - name: "RegimeFilter"
+      blocked_regimes: [ "NOISE" ]
+      penalty_regimes:
+        CHOPPY: 0.6         # scale quantity by 0.6 in CHOPPY regime
+
+    - name: "CorrelationFilter"
+      lookback: 60          # bars of price history for correlation
+      threshold: 0.75       # |corr| >= threshold -> blocked
+
+    - name: "DrawdownKillSwitch"
+      reduce_threshold: -0.08   # scale positions by reduce_multiplier
+      kill_threshold: -0.15     # block ALL new BUY orders
+      reduce_multiplier: 0.5
+
+    - name: "MaxOpenPositions"
+      max_open_positions: 3
+
+    - name: "ConfidenceSizer"
+      min_quantity: 0.0
+      max_quantity: 10.0
+
+# ------------------------------------------------
+# Brokerage
+# ------------------------------------------------
+BROKERAGE:
+  type: simulated
+  mode: paper
+  sim:
+    spread_bps: 2.0
+    slippage_mean_bps: 0.5
+    slippage_std_bps: 1.0
+    commission_per_share: 0.0
+    partial_fill_probability: 0.0
+    reject_probability: 0.0
+    max_fill_pct_of_bar_volume: 0.25
+    impact_bps_at_full_participation: 10.0
+    min_latency_ms: 0
+    max_latency_ms: 0
+  # To switch to IBKR, change `type` to `ibkr` and use the block below.
+  # ibkr:
+  #   host: "127.0.0.1"
+  #   port: 4002
+  #   client_id: 1
