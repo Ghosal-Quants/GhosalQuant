@@ -4,7 +4,7 @@ from typing import Iterable
 import heapq
 import random
 
-from .broker_base import Broker
+from .broker_base import Broker, order_expires_at
 from .commissions import CommissionModel, PerShareCommission
 from .fills import FillModel, PlannedFill, RestingOrder, SimulationContext
 from ..core import metadata_keys
@@ -292,12 +292,7 @@ class SimulatedBroker(Broker):
         ]
 
     def _expires_at(self, resting: RestingOrder) -> datetime | None:
-        metadata = resting.order.metadata or {}
-        value = metadata.get(metadata_keys.MAX_ORDER_AGE_SECONDS)
-        max_age = float(value) if value is not None and float(value) > 0.0 else self.max_order_age_seconds
-        if max_age is None:
-            return None
-        return resting.order.time_stamp + timedelta(seconds=max_age)
+        return order_expires_at(resting.order, self.max_order_age_seconds)
 
 
 def _liquidity(order: Order) -> Liquidity:

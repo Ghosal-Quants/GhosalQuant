@@ -841,6 +841,10 @@ or Gateway. Supports:
   from this process's memory, so an order placed before a restart is still visible. `MaxSymbolExposure` and
   `CashAllocationRule` measure committed capital from `RiskContext.open_orders`, which stays empty for a broker
   that cannot report — so without this they were blind live.
+- Expiring the resting orders it placed on the same rule as a simulated broker (`order_expires_at`: the order's
+  `MAX_ORDER_AGE_SECONDS`, else the broker's `max_order_age_seconds`). Past that time the order is cancelled at IB
+  and `on_order_expired` fires. IB confirms a cancel later, so the order stays in `open_order_views` until then, and
+  a fill already on its way still arrives. Without `state_path`, a restart forgets the time to live.
 - Commission taken from IB's `commissionReport` rather than left empty.
 - Routing whatever the registry describes: `ib_contract` builds an IBKR `Option` for a symbol registered as one and
   a `Stock` otherwise, and `ib_symbol` names what comes back. An option's IB `symbol` is its *underlier*, so

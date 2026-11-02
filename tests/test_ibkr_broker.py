@@ -7,6 +7,7 @@ import pytest
 from ghosalquant.brokerage import ibkr
 from ghosalquant.brokerage.ibkr import IBKRBroker, ib_contract, ib_symbol
 from ghosalquant.brokerage.open_orders import OpenOrderQueries
+from ghosalquant.brokerage.order_book_sim import OrderBookSimBroker
 from ib_insync import Stock
 
 from ghosalquant.core import metadata_keys
@@ -524,6 +525,174 @@ def test_an_execution_moves_the_position_once_through_the_whole_chain(tmp_path, 
 
     assert once == 2.0
     assert portfolio.open_qty_by_symbol.get("AAPL", 0.0) == 2.0
+
+
+# ----- Orders expire on the same rule as a simulated broker's ----- #
+
+def _aged_order(max_age: float | None = 60.0, *, at: datetime = T0) -> Order:
+    return Order(
+        time_stamp=at, symbol="AAPL", side=SignalType.BUY, quantity=10.0, ref_price=99.5, limit_price=99.5,
+        metadata={} if max_age is None else {metadata_keys.MAX_ORDER_AGE_SECONDS: max_age},
+    )
+
+
+def test_an_order_past_its_time_to_live_is_cancelled_at_the_venue(fake_ib):
+    broker = IBKRBroker()
+    order_id = broker.submit(_aged_order(60.0))
+
+    assert broker.next_order_expiry_at() == T0 + timedelta(seconds=60)
+    assert broker.expire_orders(now=T0 + timedelta(seconds=59)) == []
+    assert fake_ib.cancelled == []
+
+    assert broker.expire_orders(now=T0 + timedelta(seconds=60)) == [order_id]
+    assert fake_ib.cancelled == [int(order_id)]
+
+
+def test_an_expired_order_is_not_cancelled_again_while_ib_confirms(fake_ib):
+    broker = IBKRBroker()
+    order_id = broker.submit(_aged_order(60.0))
+    broker.expire_orders(now=T0 + timedelta(seconds=60))
+
+    # IB has not confirmed, so the order is still reported, but it is not due any more.
+    assert [view.broker_order_id for view in broker.open_order_views("AAPL")] == [order_id]
+    assert broker.next_order_expiry_at() is None
+    assert broker.expire_orders(now=T0 + timedelta(days=1)) == []
+    assert fake_ib.cancelled == [int(order_id)]
+
+
+def test_a_cancel_is_sent_again_on_a_new_connection(fake_ib):
+    broker = IBKRBroker()
+    order_id = broker.submit(_aged_order(60.0))
+    due = T0 + timedelta(seconds=60)
+    broker.expire_orders(now=due)
+
+    asyncio.run(broker.disconnect())
+    asyncio.run(broker.connect())
+
+    assert broker.next_order_expiry_at() == due
+    assert broker.expire_orders(now=due) == [order_id]
+    assert fake_ib.cancelled == [int(order_id), int(order_id)]
+
+
+def test_the_broker_default_applies_unless_the_order_sets_its_own(fake_ib):
+    broker = IBKRBroker(max_order_age_seconds=30.0)
+    default_id = broker.submit(_aged_order(None))
+    own_id = broker.submit(_aged_order(90.0))
+
+    assert broker.expire_orders(now=T0 + timedelta(seconds=30)) == [default_id]
+    assert broker.expire_orders(now=T0 + timedelta(seconds=90)) == [own_id]
+
+
+def test_an_order_with_no_time_to_live_stays_open(fake_ib):
+    broker = IBKRBroker()
+    broker.submit(_aged_order(None))
+
+    assert broker.next_order_expiry_at() is None
+    assert broker.expire_orders(now=T0 + timedelta(days=1)) == []
+    assert fake_ib.cancelled == []
+
+
+def test_an_order_it_did_not_place_is_never_expired(fake_ib):
+    fake_ib.open_trades = [FakeIBTrade(FakeContract("AAPL"), FakeIBOrder(7, "SELL", 3.0, 101.0), _remaining=3.0)]
+    broker = IBKRBroker(max_order_age_seconds=1.0)
+
+    assert broker.next_order_expiry_at() is None
+    assert broker.expire_orders(now=T0 + timedelta(days=1)) == []
+    assert fake_ib.cancelled == []
+
+
+def test_a_filled_order_is_not_cancelled(fake_ib):
+    broker = IBKRBroker()
+    broker.submit(_aged_order(60.0))
+    fake_ib.open_trades[0]._remaining = 0.0
+
+    assert broker.expire_orders(now=T0 + timedelta(seconds=60)) == []
+    assert fake_ib.cancelled == []
+
+
+def test_nothing_expires_without_a_connection(fake_ib):
+    broker = IBKRBroker()
+    broker.submit(_aged_order(60.0))
+    fake_ib.connected = False
+
+    assert broker.next_order_expiry_at() is None
+    assert broker.expire_orders(now=T0 + timedelta(seconds=60)) == []
+    assert fake_ib.cancelled == []
+
+
+def test_a_time_to_live_survives_a_restart(tmp_path, fake_ib):
+    state = tmp_path / "ibkr.json"
+    order_id = IBKRBroker(state_path=state).submit(_aged_order(60.0))
+
+    restarted = IBKRBroker(state_path=state)
+
+    assert restarted.next_order_expiry_at() == T0 + timedelta(seconds=60)
+    assert restarted.expire_orders(now=T0 + timedelta(seconds=60)) == [order_id]
+
+
+def test_a_negative_default_age_is_refused(fake_ib):
+    with pytest.raises(ValueError):
+        IBKRBroker(max_order_age_seconds=-1.0)
+
+
+class _QuoteThenRequote(OrderBookStrategy):
+    """Rests one bid on the first AAPL book, and a fresh one whenever a bid expires."""
+
+    def __init__(self, metadata: dict | None = None) -> None:
+        super().__init__()
+        self.metadata = metadata or {}
+        self.quoted = False
+        self.expired: list = []
+
+    def on_start(self) -> None: ...
+
+    def on_end(self) -> None: ...
+
+    def _bid(self, at: datetime, price: float) -> Signal:
+        return Signal(
+            time_stamp=at, symbol="AAPL", signal_type=SignalType.BUY, ref_price=price, confidence=1.0,
+            quantity=1.0, limit_price=price, metadata=dict(self.metadata),
+        )
+
+    def on_order_book(self, book, context=None):
+        if self.quoted or book.symbol != "AAPL":
+            return None
+        self.quoted = True
+        return self._bid(book.time_stamp, book.best_bid.price)
+
+    def on_order_expired(self, order, broker_order_id, expired_at, context):
+        self.expired.append((order.symbol, order.limit_price, order.metadata, expired_at))
+        return self._bid(expired_at, order.limit_price)
+
+
+@pytest.mark.parametrize(
+    "metadata, broker_settings",
+    [
+        ({metadata_keys.MAX_ORDER_AGE_SECONDS: 2.0}, {}),
+        ({}, {"max_order_age_seconds": 2.0}),
+    ],
+    ids=["age_on_the_order", "age_on_the_broker"],
+)
+def test_simulated_and_ibkr_runs_expire_the_same_orders_at_the_same_moments(fake_ib, metadata, broker_settings):
+    """Same strategy, same stream, through the one ``ExecutionSystem``: only the broker differs."""
+    stream = [_book(0)] + [_book(second, symbol="MSFT") for second in range(1, 6)]
+
+    def run(broker) -> _QuoteThenRequote:
+        strategy = _QuoteThenRequote(metadata)
+        asyncio.run(ExecutionSystem(
+            ListDataSource(stream), strategy,
+            portfolio=BasicPortfolio(init_capital=100_000.0),
+            risk_manager=RiskManager(), broker=broker,
+        ).run())
+        return strategy
+
+    simulated = run(OrderBookSimBroker(maker_rebate_bps=0.0, taker_fee_bps=0.0, seed=3, **broker_settings))
+    live = run(IBKRBroker(**broker_settings))
+
+    moments = [T0 + timedelta(seconds=2), T0 + timedelta(seconds=4)]
+    assert [expired[3] for expired in simulated.expired] == moments
+    assert live.expired == simulated.expired
+    assert fake_ib.cancelled == [101, 102]
 
 
 # ----- Options reach the venue as options ----- #

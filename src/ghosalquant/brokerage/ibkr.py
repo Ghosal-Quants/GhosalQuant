@@ -17,7 +17,7 @@ from ib_insync import (
     Contract
 )
 
-from .broker_base import Broker
+from .broker_base import Broker, order_expires_at
 from ..core import metadata_keys
 from ..core.contracts import Contract as TradedContract, ContractRegistry, Right
 from ..core.types import Fill, Liquidity, OpenOrderView, Order, SignalType
@@ -46,6 +46,9 @@ class IBKRBroker(Broker):
     an order is written down *before* it is sent, so an acknowledgement lost to a timeout leaves a
     record behind: ``indeterminate_orders()`` reports it on the next start instead of the order
     being forgotten or blindly sent again.
+
+    Orders it placed expire on the same rule as a simulated broker's (``order_expires_at``),
+    driven by the ``ExecutionSystem``. Past their time to live they are cancelled at IB.
     """
 
     def __init__(
@@ -60,8 +63,12 @@ class IBKRBroker(Broker):
             contract_overrides: Iterable[Contract] | None = None,
             state_path: str | Path | None = None,
             contracts: ContractRegistry | None = None,
+            max_order_age_seconds: float | None = None,
     ) -> None:
         super().__init__()
+        if max_order_age_seconds is not None and max_order_age_seconds <= 0:
+            raise ValueError("max_order_age_seconds must be > 0 when set")
+
         self.ib = IB()
         self.host = host
         self.port = port
@@ -73,6 +80,7 @@ class IBKRBroker(Broker):
         # lookup for contract overrides
         self.contract_map = {c.symbol: c for c in (contract_overrides or [])}
         self.contracts = contracts if contracts is not None else ContractRegistry()
+        self.max_order_age_seconds = max_order_age_seconds
 
         self._store = (
             None if state_path is None
@@ -82,6 +90,7 @@ class IBKRBroker(Broker):
         )
         self._seen_exec_ids: set[str] = set()
         self._orders_by_id: dict[str, Order] = {}
+        self._expiry_cancels: set[str] = set()
         self._pending: dict[str, dict[str, Any]] = {}
         self._fill_queue: list[Fill] = []
         self._events_wired = False
@@ -97,6 +106,8 @@ class IBKRBroker(Broker):
             port=self.port,
             clientId=self.client_id
         )
+        # A cancel sent on an earlier connection may never have arrived.
+        self._expiry_cancels.clear()
 
         if not self._events_wired:
             self.ib.execDetailsEvent += self._on_exec_details
@@ -210,6 +221,25 @@ class IBKRBroker(Broker):
             cancelled += 1
         return cancelled
 
+    # ----- Order lifecycle ----- #
+    def next_order_expiry_at(self) -> datetime | None:
+        return min((expires_at for _, _, expires_at in self._expiring_trades()), default=None)
+
+    def expire_orders(self, *, now: datetime) -> list[str]:
+        """
+        Cancel this broker's orders past their time to live, returning the ids expired.
+
+        IB confirms a cancel later, so an expired order stays in ``open_order_views`` until it
+        does, and a fill already on its way still arrives.
+        """
+        expired = []
+        for order_id, trade, expires_at in self._expiring_trades():
+            if now >= expires_at:
+                self.ib.cancelOrder(trade.order)
+                self._expiry_cancels.add(order_id)
+                expired.append(order_id)
+        return expired
+
     # ----- Helpers ----- #
     def _on_exec_details(self, _trade: IBTrade, fill: IBFill) -> None:
         """
@@ -240,6 +270,32 @@ class IBKRBroker(Broker):
                 commission=_commission(fill),
             )
         )
+
+    def _expiring_trades(self) -> list[tuple[str, IBTrade, datetime]]:
+        """
+        Open trades with a time to live, and when each runs out.
+
+        Only orders this broker placed: anything else on the account was not given a time to
+        live here. A cancel is sent once per connection, because ib_insync treats an error from
+        IB as the order being cancelled, and a repeat could draw one while the first is pending.
+        """
+        if not self.ib.isConnected():
+            return []
+        expiring = []
+        for trade in self.ib.openTrades():
+            order_id = str(getattr(trade.order, "orderId", "") or "")
+            known = self._orders_by_id.get(order_id)
+            if (
+                known is None
+                or order_id in self._expiry_cancels
+                or float(trade.remaining()) <= 0.0
+                or not _describes(known, trade, ib_symbol(trade.contract))
+            ):
+                continue
+            expires_at = order_expires_at(known, self.max_order_age_seconds)
+            if expires_at is not None:
+                expiring.append((order_id, trade, expires_at))
+        return expiring
 
     def _restore(self) -> None:
         if self._store is None:

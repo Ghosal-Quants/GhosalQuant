@@ -1,7 +1,18 @@
 from abc import ABC, abstractmethod
-from datetime import datetime
+from datetime import datetime, timedelta
 
+from ..core import metadata_keys
 from ..core.types import Bar, CashFlow, Fill, MarketEvent, Order, OrderBook, PublicTrade
+
+
+def order_expires_at(order: Order, default_max_age_seconds: float | None = None) -> datetime | None:
+    """When an order's time to live runs out: its own ``MAX_ORDER_AGE_SECONDS``, else the broker's default."""
+    value = (order.metadata or {}).get(metadata_keys.MAX_ORDER_AGE_SECONDS)
+    max_age = float(value) if value is not None and float(value) > 0.0 else default_max_age_seconds
+    if max_age is None:
+        return None
+    return order.time_stamp + timedelta(seconds=max_age)
+
 
 class Broker(ABC):
     # ----- Managing Connection ----- #
@@ -63,11 +74,11 @@ class Broker(ABC):
 
     def expire_orders(self, *, now: datetime) -> list[str]:
         """
-        Expire resting orders past their time to live, returning the ids removed.
+        Expire resting orders past their time to live, returning the ids expired.
 
-        A live venue expires its own orders, so the default does nothing. A simulation broker
-        overrides this, and the ``ExecutionSystem`` drives it from the clock so an order is gone
-        the moment it falls due rather than when its symbol next ticks.
+        The default expires nothing, for a broker with no time to live. The ``ExecutionSystem``
+        drives this from the clock, so an order goes the moment it falls due rather than when its
+        symbol next ticks.
         """
         return []
 
