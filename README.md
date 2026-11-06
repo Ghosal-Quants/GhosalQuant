@@ -39,6 +39,7 @@ src/ghosalquant/
   portfolio/      # Portfolio protocol, BasicPortfolio
   brokerage/      # Broker base, SimBroker, IBKRBroker
   util/           # Config, visualisation, helpers
+  backtest_ui/    # Prototype GUI (the [ui] extra)
 examples/         # Ready-to-run scripts and sample config
 ```
 
