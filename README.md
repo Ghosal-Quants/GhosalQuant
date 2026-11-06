@@ -8,22 +8,46 @@ A modular Python framework for developing, backtesting, and executing quantitati
 - [User Guide](https://github.com/Ghosal-Quants/GhosalQuant/blob/main/design/user_guide.md) - getting started + quick reference
 
 ## Installation
+
+### Using a release
+To write and backtest strategies, install the published package from [PyPI](https://pypi.org/project/ghosalquant/):
 ```bash
 pip install ghosalquant
 ```
-Optional extras: `ghosalquant[alpaca]` (Alpaca market data), `ghosalquant[plotting]` (matplotlib and plotly charts),
-`ghosalquant[ui]` (the prototype backtest GUI, launched with `ghosalquant-ui`).
+Pin a version (`pip install ghosalquant==0.1.0`) to keep results reproducible, and `pip install -U ghosalquant` to
+upgrade. Optional extras add integrations:
 
-To work on the framework itself, install from source in editable mode:
+| Extra | Adds |
+|---|---|
+| `alpaca` | Alpaca market data (`alpaca-py`) |
+| `plotting` | Equity curve and results charts (`matplotlib`, `plotly`) |
+| `ui` | The prototype backtest GUI, launched with `ghosalquant-ui` |
+
+```bash
+pip install "ghosalquant[plotting,ui]"
+```
+
+API keys for Alpaca and Polygon are read from environment variables or a `.env` file beside your config (see
+[`.env.example`](https://github.com/Ghosal-Quants/GhosalQuant/blob/main/.env.example)).
+
+### For developers
+To work on the framework itself, clone the repository and install it in editable mode, so your changes take effect
+without reinstalling:
 ```bash
 git clone https://github.com/Ghosal-Quants/GhosalQuant.git
 cd GhosalQuant
-pip install -e .
+pip install -e ".[plotting,ui]" pytest
+python -m pytest tests --ignore=tests/legacy
 ```
+Copy `.env.example` to `.env` and fill in any API keys you need.
+
+Releases are published by CI: bump `__version__` in `src/ghosalquant/__init__.py`, push to `main`, then publish a
+GitHub release tagged with that version (e.g. `v0.1.1`). The workflow runs the tests, builds the package and uploads
+it to PyPI, and fails if the tag and version don't match.
 
 ## Quick Start
 1. **Write a strategy** — subclass `Strategy`, implement `on_market_data(bar) -> Signal | None`
-2. **Create a config** — see `examples/config.yaml`
+2. **Create a config** — see [`examples/config.yaml`](https://github.com/Ghosal-Quants/GhosalQuant/blob/main/examples/config.yaml)
 3. **Run a backtest**:
 ```python
 from ghosalquant.backtester.backtester_base import Backtester
@@ -33,7 +57,8 @@ kpms = Backtester.from_config(strategy=MyStrategy(), config_path="config.yaml").
 print(kpms)
 ```
 
-See `examples/` for more examples for: DataFrame backtesting, strategy comparison, IBKR paper trading, and live data.
+See [`examples/`](https://github.com/Ghosal-Quants/GhosalQuant/tree/main/examples) for more examples for: DataFrame
+backtesting, strategy comparison, IBKR paper trading, and live data.
 
 ## Project Structure
 ```
