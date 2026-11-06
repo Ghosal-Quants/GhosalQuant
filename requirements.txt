@@ -14,7 +14,7 @@ requests
 widgetsnbextension
 yfinance
 PyYAML
-dotenv
+python-dotenv
 customtkinter
 pyarrow
 fastparquet

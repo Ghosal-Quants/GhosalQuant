@@ -978,9 +978,9 @@ def plot_equity_curve(
 - Set `show_realised_unrealised=True` to generate a second figure showing realised vs unrealised PnL over time.
 
 ## 12 Backtest UI (Prototype)
-A prototype GUI (`src/backtest_ui/`) built with `customtkinter` that lets users select a config file and strategy
-file, then runs a `DataFrameBacktester` in a subprocess and displays logs and plots. This is experimental and not
-part of the core library.
+A prototype GUI (`ghosalquant.backtest_ui`) built with `customtkinter` that lets users select a config file and
+strategy file, then runs a `DataFrameBacktester` in a subprocess and displays logs and plots. This is experimental and
+not part of the core library. Install it with `pip install "ghosalquant[ui]"` and launch it with `ghosalquant-ui`.
 
 ## 13 Recording and Replay
 `ghosalquant.recording` writes a live market-event stream to disk so it can be replayed later.

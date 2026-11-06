@@ -4,12 +4,19 @@ Ghosal Fund | Quantitative Trading Team Repository
 A modular Python framework for developing, backtesting, and executing quantitative trading strategies.
 
 ## Documentation
-- [System Overview](design/system-overview.md) - architecture + data flow
-- [User Guide](design/user_guide.md) - getting started + quick reference
+- [System Overview](https://github.com/Ghosal-Quants/GhosalQuant/blob/main/design/system-overview.md) - architecture + data flow
+- [User Guide](https://github.com/Ghosal-Quants/GhosalQuant/blob/main/design/user_guide.md) - getting started + quick reference
 
 ## Installation
 ```bash
-git clone https://github.com/tomlaustin/GhosalQuant.git
+pip install ghosalquant
+```
+Optional extras: `ghosalquant[alpaca]` (Alpaca market data), `ghosalquant[plotting]` (matplotlib and plotly charts),
+`ghosalquant[ui]` (the prototype backtest GUI, launched with `ghosalquant-ui`).
+
+To work on the framework itself, install from source in editable mode:
+```bash
+git clone https://github.com/Ghosal-Quants/GhosalQuant.git
 cd GhosalQuant
 pip install -e .
 ```

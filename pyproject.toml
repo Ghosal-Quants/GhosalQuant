@@ -1,20 +1,39 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=77.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "ghosalquant"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Event-driven quantitative trading research framework"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Ghosal Quants" }]
 requires-python = ">=3.10"
+keywords = ["quant", "trading", "backtesting", "algorithmic-trading", "finance"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Office/Business :: Financial :: Investment",
+]
 
 dependencies = [
     "numpy",
     "pandas",
+    "pytz",
     "requests",
     "yfinance",
     "PyYAML",
-    "dotenv",
+    "python-dotenv",
     "pyarrow",
     "fastparquet",
     "ib_insync",
@@ -24,10 +43,23 @@ dependencies = [
 [project.optional-dependencies]
 alpaca = ["alpaca-py"]
 plotting = ["matplotlib", "plotly"]
-ui = ["customtkinter"]
+ui = ["customtkinter", "matplotlib"]
+
+[project.gui-scripts]
+ghosalquant-ui = "ghosalquant.backtest_ui.app:main"
+
+[project.urls]
+Homepage = "https://github.com/Ghosal-Quants/GhosalQuant"
+Documentation = "https://github.com/Ghosal-Quants/GhosalQuant/blob/main/design/user_guide.md"
+Repository = "https://github.com/Ghosal-Quants/GhosalQuant"
+Issues = "https://github.com/Ghosal-Quants/GhosalQuant/issues"
+
+[tool.setuptools.dynamic]
+version = { attr = "ghosalquant.__version__" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
+include = ["ghosalquant*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

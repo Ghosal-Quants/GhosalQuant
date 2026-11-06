@@ -3,11 +3,14 @@ This guide provides a high level overview of how to get started using the Ghosal
 and backtesting.
 
 ## Installation
-To install the GhosalQuant library, you can use pip:
+To install the GhosalQuant library from PyPI:
+```bash
+pip install ghosalquant
+```
+To work on the library itself, install it from the root directory of a clone instead:
 ```bash
 pip install -e .
-```
-from the root directory of the project. This will install the library in editable mode, allowing you to make changes to 
+``` This will install the library in editable mode, allowing you to make changes to 
 the code and have them reflected immediately, and keep up to date with the remote repository.
 
 ## Creating a Strategy
