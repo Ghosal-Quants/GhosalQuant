@@ -1,5 +1,4 @@
 from __future__ import annotations
-from typing import Protocol
 import pandas as pd
 from dataclasses import replace
 import math
@@ -12,7 +11,8 @@ async def _pass_to_next(next_sink: SignalSink | None, signal: Signal) -> None:
     if next_sink is not None:
         await next_sink.on_signal(signal)
 
-class SignalSink(Protocol):
+# A plain base class, not a Protocol: Python 3.10 discards __init__ on Protocol classes.
+class SignalSink:
     def __init__(self, next_sink: SignalSink | None = None):
         self._next_sink = next_sink
 
