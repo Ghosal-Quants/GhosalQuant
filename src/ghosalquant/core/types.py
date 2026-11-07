@@ -2,7 +2,6 @@ from dataclasses import dataclass, asdict, field, replace as _dataclass_replace
 from datetime import datetime
 from enum import Enum
 from typing import Any, Union
-import warnings
 
 from . import metadata_keys
 
@@ -383,22 +382,6 @@ class OpenOrderView:
     def order_slot(self) -> str | None:
         slot = (self.order.metadata or {}).get(metadata_keys.ORDER_SLOT)
         return None if slot is None else str(slot)
-
-
-@dataclass(slots=True)
-class OpenOrderState:
-    """Deprecated: superseded by ``OpenOrderView``. Retained for one release."""
-    broker_order_id: str
-    order: Order
-    submitted_at: datetime
-    remaining_qty: float
-
-    def __post_init__(self) -> None:
-        warnings.warn(
-            "OpenOrderState is deprecated; use OpenOrderView.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
 
 
 @dataclass(frozen=True, slots=True)
