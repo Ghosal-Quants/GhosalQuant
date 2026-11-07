@@ -471,6 +471,7 @@ class ExecutionSystem:
         position_cost_by_symbol: dict[str, float] = {}
         peak_equity: float | None = None
         equity: float | None = None
+        cash: float | None = None
         current_drawdown: float | None = None
 
         if self.portfolio is not None:
@@ -490,6 +491,7 @@ class ExecutionSystem:
             }
             peak_equity = float(self.portfolio.peak_equity)
             equity = float(self.portfolio.current_equity)
+            cash = float(self.portfolio.cash_balance)
 
             if peak_equity > 0.0:
                 current_drawdown = (equity / peak_equity) - 1.0
@@ -501,6 +503,7 @@ class ExecutionSystem:
             current_drawdown=current_drawdown,
             peak_equity=peak_equity,
             current_equity=equity,
+            cash=cash,
             price_history=(
                 {symbol: list(prices) for symbol, prices in self._price_history.items()}
                 if self._price_history else None

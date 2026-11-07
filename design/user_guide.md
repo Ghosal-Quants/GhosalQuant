@@ -3,20 +3,22 @@ This guide provides a high level overview of how to get started using the Ghosal
 and backtesting.
 
 ## Installation
-To install the GhosalQuant library, you can use pip:
+To install the GhosalQuant library from PyPI:
+```bash
+pip install ghosalquant
+```
+To work on the library itself, install it from the root directory of a clone instead:
 ```bash
 pip install -e .
 ```
-from the root directory of the project. This will install the library in editable mode, allowing you to make changes to 
-the code and have them reflected immediately, and keep up to date with the remote repository.
+This installs the library in editable mode, so your changes to the code take effect immediately.
 
 ## Creating a Strategy
 The way strategies are created in GhosalQuant is by creating a class which inherits from the `Strategy` base class as 
 follows (hopefully your strategies will be more intelligent than this example!):
 
 ```python
-from ghosalquant import Strategy
-from ghosalquant.core.types import Bar, Signal, SignalType
+from ghosalquant import Bar, Signal, SignalType, Strategy
 
 
 class MyStrategy(Strategy):
@@ -60,8 +62,24 @@ class MyStrategy(Strategy):
         )
 ```
 
+### Sizing a signal
+Each signal is sized by one of:
+- `quantity=`: units to trade.
+- `metadata={metadata_keys.TARGET_WEIGHT: w}` (`from ghosalquant import metadata_keys`): the position to hold after
+  the trade, as a share of equity; `0.0` closes it. The risk manager nets it against what is held and resting, sets the
+  side from the difference, and caps a buy at the cash not committed to resting buys, less `RISK.cash_buffer`
+  (default 1%) of equity.
+- a sizing rule in `RISK`, such as `ConfidenceSizer` or `SymbolCapitalFractionSizer`.
+
+A signal none of these sizes is dropped with a `WARNING` log, once per symbol.
+
 ## Config File
-Before running a backtest, create a `config.yaml` (see `examples/config.yaml` for a full example). The key sections:
+A config is optional. Without one you get a simulated broker and no risk rules, which is enough for a
+`DataFrameBacktester`. Settings come from a `Config` object (`ghosalquant.util.config`) or from a YAML file read with
+`Config.from_yaml`; see
+[`examples/config.yaml`](https://github.com/Ghosal-Quants/GhosalQuant/blob/main/examples/config.yaml) for a full
+example. Every section is optional except `SYSTEM`, and `DATA` and `TIME_RANGE` are only needed when the library loads
+the bars itself (`Backtester.from_config`). The sections:
 
 ```yaml
 SYSTEM:
@@ -69,11 +87,11 @@ SYSTEM:
   main_timeframe: "1D"
   execution_timeframe: "5Min"
   fresh_candles: False
-  use_risk_manager: True
+  use_risk_manager: True   # the default; False ignores the RISK rules
 
 DATA:
-  source: "yfinance"   # or "polygon" / "live_ibkr"
-  events: ["bars"]     # live_ibkr can also stream "order_books" and "trades"
+  source: "yfinance"   # or "polygon" / "live_ibkr" / "live_alpaca"
+  events: ["bars"]     # the live sources can also stream "order_books" and "trades"
   yfinance: {}
   # live_ibkr:
   #   host: "127.0.0.1"
@@ -90,6 +108,7 @@ TIME_RANGE:
   session_end_time: "17:00"
 
 RISK:
+  cash_buffer: 0.01    # share of equity a TARGET_WEIGHT buy keeps in cash for the move before it fills
   rules:
     - name: "MaxOpenPositions"
       max_open_positions: 3
@@ -128,7 +147,8 @@ df = yf.download("AAPL", start="2024-01-01", end="2025-12-31", auto_adjust=True,
 backtester = DataFrameBacktester(
     strategy=MyStrategy(),
     dataframe=df,
-    config_path="config.yaml"
+    config_path="config.yaml",  # or config=Config(...), or leave both out for the defaults
+    symbol="AAPL",
 )
 
 kpms = backtester.run()
@@ -137,6 +157,11 @@ print(kpms)
 plot_equity_curve(backtester.equity_curve, show_realised_unrealised=True)
 plt.show()
 ```
+The bars are traded as `symbol`, or as the first of `SYSTEM.symbols` when it is left out. The DataFrame supplies the
+dates, so `DATA` and `TIME_RANGE` are not read.
+
+`MyStrategy` above sends no quantity, so it relies on the `ConfidenceSizer` rule in `RISK` to size its signals (see
+[Sizing a signal](#sizing-a-signal)).
 
 ### Option 2: Backtester.from_config (data sourced from config)
 ```python
@@ -150,13 +175,17 @@ backtester = Backtester.from_config(
 kpms = backtester.run()
 print(kpms)
 ```
-This creates the data source automatically based on whatever is in your config file.
+This creates the data source from the config's `DATA` and `TIME_RANGE`, which it needs. It also takes `config=`.
 
 ### What you get back
-`backtester.run()` returns a `BacktestKPMs` object with: `total_trades`, `total_wins`, `total_losses`, `win_rate_pct`, 
-`realised_pnl`, `unrealised_pnl`, `total_pnl`, plus the risk-adjusted set — `max_drawdown`, `annualized_return_pct`,
-`return_volatility_pct`, `downside_volatility_pct`, `sharpe_ratio`, `sortino_ratio`, `calmar_ratio`. Ratios the equity
-path cannot support (a flat curve, too few points, no losing period) are `None`.
+`backtester.run()` returns a `BacktestKPMs` object with: `total_trades`, `total_wins`, `total_losses`, `win_rate_pct`,
+`realised_pnl`, `unrealised_pnl`, `total_pnl`, `open_positions`, `fills`, plus the risk-adjusted set — `max_drawdown`,
+`annualized_return_pct`, `return_volatility_pct`, `downside_volatility_pct`, `sharpe_ratio`, `sortino_ratio`,
+`calmar_ratio`. Ratios the equity path cannot support (a flat curve, too few points, no losing period) are `None`.
+
+`total_trades` counts closed lots: one per lot, or part of a lot, that an opposite fill closed. A position held to the
+end adds nothing to it, and one exit can close several lots. `open_positions` is the number of symbols still held at
+the end, and `fills` the number of fills the portfolio booked.
 
 To score a curve directly, or to gate a change before promoting it:
 
@@ -216,8 +245,7 @@ each to the matching hook. Subclass `OrderBookStrategy` (bars are ignored, `on_o
 `StrategyContext` you are handed to see your own position and resting orders for that symbol:
 
 ```python
-from ghosalquant import OrderBookStrategy
-from ghosalquant.core.types import Fill, Liquidity, OrderBook, Signal, SignalType
+from ghosalquant import Fill, Liquidity, OrderBook, OrderBookStrategy, Signal, SignalType
 from ghosalquant.execution.context import StrategyContext
 
 
@@ -331,8 +359,10 @@ To read a recording outside the framework, `iter_stream_records(path)` yields ev
 | Combine several data streams | `merge_datasources(...)` |
 | Record a live session to disk | `RecordingDataSource(source, dir)` |
 | Replay a recorded session | `RecordedDataSource(dir)` |
-| Backtest with a DataFrame | `DataFrameBacktester` |
+| Backtest with a DataFrame | `DataFrameBacktester` (config optional) |
 | Backtest from config (auto data) | `Backtester.from_config()` |
+| Configure in Python | `Config(...)`, or `Config.from_yaml(path)` |
+| Size as a share of equity | `metadata={metadata_keys.TARGET_WEIGHT: w}` on the `Signal` |
 | Live / paper trading | `ExecutionSystem` + `IBKRBroker` |
 | Simulated execution | `ExecutionSystem` + `SimBroker` |
 | Plot equity curves | `plot_equity_curve()` |

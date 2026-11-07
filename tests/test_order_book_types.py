@@ -1,4 +1,3 @@
-import warnings
 from datetime import datetime
 
 import pytest
@@ -7,7 +6,6 @@ from ghosalquant.core import metadata_keys
 from ghosalquant.core.types import (
     BookLevel,
     Liquidity,
-    OpenOrderState,
     OpenOrderView,
     Order,
     OrderBook,
@@ -218,14 +216,6 @@ def test_open_order_view_properties():
 
     unpriced = OpenOrderView(broker_order_id="SIM-2", order=order, remaining_quantity=4.0, submitted_at=order.time_stamp)
     assert unpriced.notional == pytest.approx(400.0)
-
-
-def test_open_order_state_is_deprecated():
-    order = Order(time_stamp=_ts("2025-11-15 09:30:00"), symbol="TEST", side=SignalType.BUY, quantity=1.0, ref_price=100.0)
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        OpenOrderState(broker_order_id="x", order=order, submitted_at=order.time_stamp, remaining_qty=1.0)
-    assert any(issubclass(w.category, DeprecationWarning) for w in caught)
 
 
 def test_liquidity_is_a_string_enum():

@@ -1,6 +1,6 @@
 """
 An order-book strategy end to end: synthetic L2 books and prints -> OrderBookStrategy ->
-RiskManager -> SimBroker -> BasicPortfolio, all through the ordinary ExecutionSystem.
+RiskManager -> OrderBookSimBroker -> BasicPortfolio, all through the ordinary ExecutionSystem.
 
 Run:  python examples/example_order_book_strategy.py
 """

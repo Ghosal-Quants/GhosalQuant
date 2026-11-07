@@ -2,25 +2,23 @@
 # General System Settings
 # ------------------------------------------------
 SYSTEM:
-  # The location of the historical data files
+  # A ticker or a list. DataFrameBacktester trades its bars as the first unless given symbol=.
   symbols: ["NVDA", "SPY"]
-  # The timeframe for the main data (e.g., 1H, 30Min, 1D)
+  # Bar timeframe of the yfinance source (e.g., 1H, 30Min, 1D)
   main_timeframe: "1D"
-  # The timeframe for signal evaluation (e.g., 5Min) (if using Parquet, must be >= base_resolution)
+  # Bar timeframe the polygon source resamples to; must be >= DATA.polygon.base_resolution
   execution_timeframe: "5Min"
-  # Use multiprocessing for faster testing
-  # use_multiprocessing: True
-  # Number of CPU cores to dedicate to the process
-  # num_processes: 4
-  # do we want fresh candles downloaded?
+  # polygon source: update the parquet store from Polygon before reading it
   fresh_candles: False
 
-  # Use the built-in risk manager
+  # Apply the RISK rules below (the default). False runs with no risk rules.
   use_risk_manager: True
 
 # ------------------------------------------------
 # Data Source Configuration
 # ------------------------------------------------
+# DATA and TIME_RANGE are only read by Backtester.from_config. A DataFrameBacktester takes its bars and
+# dates from the DataFrame, so it needs neither.
 DATA:
   source: "yfinance" # Options: "polygon", "yfinance", "live_ibkr", "live_alpaca"
   # Which market events the source yields: "bars" (default), plus "order_books" and "trades" for live_ibkr.
@@ -75,6 +73,8 @@ TIME_RANGE:
 # Risk Manager (Only applicable if SYSTEM.use_risk_manager is True)
 # ------------------------------------------------
 RISK:
+  # Share of equity a target_weight buy leaves in cash, for the move before it fills and costs.
+  cash_buffer: 0.01
   rules:
     - name: "RegimeFilter"
       blocked_regimes: [ "NOISE" ]

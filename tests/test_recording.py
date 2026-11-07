@@ -79,18 +79,20 @@ def test_writer_seals_full_logs_into_verified_parquet(tmp_path):
 def test_unsealed_log_is_sealed_on_reopen(tmp_path):
     path = tmp_path / "stream.jsonl"
     writer = storage.SegmentedParquetWriter(path, rotate_bytes=90)
-    for index in range(8):
+    # Nine rows end on a part-filled log whether lines end in \n or \r\n.
+    for index in range(9):
         writer.write({"index": index})
     leftover = writer.active_path
     writer._file.close()
     writer._release_lock()
 
     assert leftover.suffix == ".jsonl"
+    assert leftover.stat().st_size > 0
     storage.SegmentedParquetWriter(path).close()
 
     assert not leftover.exists()
     assert leftover.with_suffix(".parquet").is_file()
-    assert [row["index"] for row in storage.iter_stream_records(path)] == list(range(8))
+    assert [row["index"] for row in storage.iter_stream_records(path)] == list(range(9))
 
 
 def test_sealed_segment_is_preferred_over_a_stale_copy_of_its_log(tmp_path):

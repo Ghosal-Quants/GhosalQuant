@@ -1,6 +1,6 @@
 # For QRs
 
-from backtest_ui.app import main
+from ghosalquant.backtest_ui.app import main
 
 if __name__ == "__main__":
     main()

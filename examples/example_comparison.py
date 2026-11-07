@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import yfinance as yf
 import pandas as pd
 from matplotlib import pyplot as plt
@@ -7,6 +9,8 @@ from ghosalquant.bench import BenchmarkBuyAndHold
 from ghosalquant.bench import BenchmarkTrendVolTarget
 from ghosalquant.backtester import DataFrameBacktester
 from ghosalquant.util.visualisation import plot_equity_curve
+
+CONFIG = Path(__file__).with_name("config.yaml")
 
 if __name__ == "__main__":
     df: pd.DataFrame | None = yf.download(
@@ -27,21 +31,24 @@ if __name__ == "__main__":
     example_bt = DataFrameBacktester(
         strategy=example_strategy,
         dataframe=df,
-        config_path="config.yaml"
+        config_path=CONFIG,
+        symbol="AAPL",
     )
     example_kpms = example_bt.run()
 
     bnh_bt = DataFrameBacktester(
         strategy=bnh_strategy,
         dataframe=df,
-        config_path="config.yaml"
+        config_path=CONFIG,
+        symbol="AAPL",
     )
     bnh_kpms = bnh_bt.run()
 
     trend_bt = DataFrameBacktester(
         strategy=trend_strategy,
         dataframe=df,
-        config_path="config.yaml"
+        config_path=CONFIG,
+        symbol="AAPL",
     )
     trend_kpms = trend_bt.run()
 

@@ -1,3 +1,4 @@
+from ghosalquant.brokerage import SimBroker
 from ghosalquant.data_layer import LivePolygonDataSource, YFinanceDataSource
 from ghosalquant.execution import ExecutionSystem
 from ghosalquant.portfolio import BasicPortfolio
@@ -44,6 +45,7 @@ if __name__ == "__main__":
         data_src=data,
         risk_manager=RiskManager(),
         portfolio=portfolio,
+        broker=SimBroker(),  # a Portfolio needs a Broker; this one simulates fills
     )
 
     asyncio.run(execution_system.run())

@@ -108,6 +108,9 @@ def calculate_kpms(portfolio: Portfolio, *, risk_free_rate: float = 0.0) -> Back
         realised_pnl=portfolio.realised_pnl,
         unrealised_pnl=portfolio.unrealised_pnl,
         total_pnl=portfolio.total_pnl,
+        open_positions=sum(1 for qty in portfolio.open_qty_by_symbol.values() if qty != 0.0),
+        # Portfolio is a Protocol, and one written before fill_count was added may lack it.
+        fills=getattr(portfolio, "fill_count", None),
         max_drawdown=risk["max_drawdown"],
         annualized_return_pct=risk["annualized_return_pct"],
         return_volatility_pct=risk["return_volatility_pct"],

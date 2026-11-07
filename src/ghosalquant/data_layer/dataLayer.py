@@ -17,8 +17,7 @@ import pandas as pd
 import os
 from datetime import datetime, timedelta
 import pytz
-import listEditor
-import staticUpdater
+from . import listEditor, staticUpdater
 DATA_PATH = os.path.dirname(os.path.abspath(__file__))
 MAIN_DATA_FILE = os.path.join(DATA_PATH, 'data/main.parquet')
 FOLLOWING_DATA_FILE = os.path.join(DATA_PATH, 'data/following.parquet')
@@ -58,7 +57,7 @@ def getData(tickers, tickerType, timeframes, startDate, endDate):
     returns two dataframes with data for the tickers in the timeframes requested
     """
     # check following.parquet to see if we have the tickers stored already but also check if it is option or stock before adding to following
-    if tickerType is 'stock':
+    if tickerType == 'stock':
         if os.path.exists(FOLLOWING_DATA_FILE):
             dF = pd.read_parquet(FOLLOWING_DATA_FILE)
             stored_tickers = dF['ticker'].unique().tolist()
@@ -69,7 +68,7 @@ def getData(tickers, tickerType, timeframes, startDate, endDate):
         else:
             for x in tickers:
                 listEditor.addStock(x)
-    elif tickerType is 'option':
+    elif tickerType == 'option':
         if os.path.exists(FOLLOWING_DATA_FILE):
             dF = pd.read_parquet(FOLLOWING_DATA_FILE)
             stored_tickers = dF['ticker'].unique().tolist()

@@ -15,7 +15,12 @@ from ghosalquant.util.config import (
     TimeConfig,
     BrokerType,
     BrokerMode,
+    BrokerConfig,
+    DataConfig,
+    RiskConfig,
+    SimBrokerConfig,
 )
+from ghosalquant.risk.builder import build_risk_manager
 
 def test_load_config():
     config: Config = load_config(Path(__file__).with_name("test_config.yaml"))
@@ -443,3 +448,60 @@ def test_the_scripts_read_the_config_rather_than_the_environment(monkeypatch):
     finally:
         listEditor.configure(StaticDataConfig())
         staticUpdater.configure(StaticDataConfig())
+
+
+_SYSTEM_ONLY = """
+SYSTEM:
+  symbols: SPY
+  main_timeframe: 1D
+  execution_timeframe: 1D
+"""
+
+
+def test_config_defaults_are_a_backtest_setup():
+    config = Config()
+
+    assert config.system.symbols == ["ASSET"]
+    assert config.system.main_timeframe == config.system.execution_timeframe == "1D"
+    assert config.system.use_risk_manager is True
+    assert config.data is None and config.time_range is None
+    assert config.risk.rules == []
+    assert config.broker == BrokerConfig(type=BrokerType.SIMULATED, mode=BrokerMode.PAPER, sim=SimBrokerConfig())
+
+
+def test_a_config_file_needs_only_system():
+    config = _load(_SYSTEM_ONLY)
+
+    assert config.system.symbols == ["SPY"]
+    assert config.system.use_risk_manager is True
+    assert config.data is None and config.time_range is None
+    assert config.broker == Config().broker
+
+
+def test_from_yaml_reads_the_same_config_as_load_config():
+    path = Path(__file__).with_name("test_config.yaml")
+    assert Config.from_yaml(path) == load_config(path)
+
+
+def test_a_data_source_needs_data_and_a_time_range():
+    with pytest.raises(ConfigError, match="DataFrameBacktester"):
+        datasource_from_config(Config())
+    with pytest.raises(ConfigError, match="TIME_RANGE"):
+        datasource_from_config(Config(data=DataConfig(source=DataSrcType.YFINANCE)))
+
+
+def test_system_config_takes_one_symbol_as_a_string_and_checks_timeframes():
+    assert SystemConfig(symbols="SPY").symbols == ["SPY"]
+    with pytest.raises(ConfigError, match="main_timeframe"):
+        SystemConfig(main_timeframe="1D ")
+    with pytest.raises(ConfigError, match="symbols"):
+        SystemConfig(symbols=[])
+
+
+def test_risk_cash_buffer_is_read_and_reaches_the_risk_manager():
+    config = _load(_SYSTEM_ONLY + "RISK:\n  cash_buffer: 0.05\n")
+
+    assert config.risk.cash_buffer == 0.05
+    assert build_risk_manager(config.risk).cash_buffer == 0.05
+    with pytest.raises(ConfigError, match="cash_buffer"):
+        RiskConfig(cash_buffer=1.5)

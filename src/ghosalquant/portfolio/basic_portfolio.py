@@ -38,6 +38,7 @@ class BasicPortfolio(Portfolio):
         self._open_cost_by_symbol: dict[str, float] = {}
         self._open_qty_by_symbol: dict[str, float] = {}
         self._applied_execution_ids: set[str] = set()
+        self._fill_count: int = 0
 
     def adopt(
             self,
@@ -100,6 +101,7 @@ class BasicPortfolio(Portfolio):
             or abs(quantity_after - quantity_before) > 1e-12
         ):
             self._accounting_version += 1
+            self._fill_count += 1
         self.snapshot_equity(
             time_stamp=fill.time_stamp,
             prices=self._last_prices
@@ -228,6 +230,10 @@ class BasicPortfolio(Portfolio):
     @property
     def accounting_version(self) -> int:
         return self._accounting_version
+
+    @property
+    def fill_count(self) -> int:
+        return self._fill_count
 
     @property
     def last_prices(self) -> dict[str, float]:

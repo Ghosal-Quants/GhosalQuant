@@ -9,15 +9,13 @@ from queue import Queue, Empty
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
 
+from . import project_root
+
 """
 WARNING: VIBED because I hate UI development and this is a prototype for now
 
 This is a rough experimental prototype of a UI to abstract backtesting from QRs.
 """
-
-def repo_root() -> Path:
-    # src/backtest_ui/app.py -> repo root is 3 parents up
-    return Path(__file__).resolve().parents[2]
 
 
 class App(ctk.CTk):
@@ -26,7 +24,7 @@ class App(ctk.CTk):
         self.title("GhosalQuant Backtest (Prototype)")
         self.geometry("900x600")
 
-        self.root = repo_root()
+        self.root = project_root()
         self.default_cfg = self.root / "examples" / "config.yaml"
 
         self.cfg_var = ctk.StringVar(value=str(self.default_cfg) if self.default_cfg.exists() else "")
@@ -106,7 +104,7 @@ class App(ctk.CTk):
         self.append(f"Running with config: {cfg}")
 
         strategy = Path(self.strategy_var.get().strip())  # add a strategy picker var in UI
-        cmd = [sys.executable, "-m", "backtest_ui", str(cfg), str(strategy)]
+        cmd = [sys.executable, "-m", "ghosalquant.backtest_ui", str(cfg), str(strategy)]
 
         def worker() -> None:
             try:

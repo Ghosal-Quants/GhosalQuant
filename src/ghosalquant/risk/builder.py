@@ -148,4 +148,4 @@ def build_risk_manager(risk_config: RiskConfig) -> RiskManager:
 
         rules.append(factory(rc.params))
 
-    return RiskManager(rules=rules)
+    return RiskManager(rules=rules, cash_buffer=risk_config.cash_buffer)

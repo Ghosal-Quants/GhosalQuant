@@ -13,6 +13,8 @@ from ghosalquant.backtester.dataframe_backtester import DataFrameBacktester
 from ghosalquant.execution.strategy_base import Strategy
 from ghosalquant.util.visualisation import plot_equity_curve
 
+from . import project_root
+
 def _safe_stem(s: str) -> str:
     # sanitiser
     chars: list[str] = []
@@ -91,8 +93,7 @@ def run_from_config(config_path: str | Path, strategy_path: str | Path) -> int:
     # Plot and save to file
     plot_equity_curve(backtester.equity_curve, show_realised_unrealised=True)
 
-    repo_root = Path(__file__).resolve().parents[2]
-    out_dir = repo_root / "ui_outputs"
+    out_dir = project_root() / "ui_outputs"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     strategy_name = _safe_stem(strat_path.stem)
