@@ -4,7 +4,7 @@ from typing import Iterable
 from pandas import DataFrame
 import pandas as pd
 
-from ..backtester.backtester_base import Backtester
+from ..backtester.backtester_base import Backtester, _resolve_config
 from ..brokerage.builder import build_broker
 from ..core.types import Order, EquityPoint, BacktestKPMs
 from ..execution.strategy_base import Strategy
@@ -12,18 +12,19 @@ from ..data_layer.dataframe_datasource import DataFrameDataSource
 from ..execution.sinks import DataFrameSink
 from ..portfolio.basic_portfolio import BasicPortfolio
 from ..util.backtester_utils import output_to_excel, calculate_kpms
-from ..util.config import load_config
+from ..util.config import Config
 
 class DataFrameBacktester(Backtester):
     def __init__(
             self,
             strategy: Strategy,
             dataframe: DataFrame,
-            config_path: str,
+            config_path: str | None = None,
 
             timestamp_col: str | None = None,
             # DataFrame format:
             *,
+            config: Config | None = None,
             symbol: str | None = None,
             open_col: str   = "Open",
             high_col: str   = "High",
@@ -39,7 +40,14 @@ class DataFrameBacktester(Backtester):
             # Backtesting
             init_capital: float = 10_000.0
     ) -> None:
-        config = load_config(config_path)
+        """
+        Backtest one symbol's bars from ``dataframe``, which supplies the dates as well.
+
+        Configured by ``config``, else the YAML at ``config_path``, else ``Config()``; DATA and
+        TIME_RANGE are not needed. The bars are traded as ``symbol``, else the first configured symbol.
+        """
+        config = _resolve_config(config, config_path)
+        symbol = symbol or config.system.symbols[0]
 
         df = dataframe.copy()
 
@@ -63,14 +71,14 @@ class DataFrameBacktester(Backtester):
         self._return_df[quantity_col] = 0.0
 
         # Backtesting variables
-        self._symbols: list[str] = config.system.symbols
+        self._symbols: list[str] = [symbol]
         self._portfolio = BasicPortfolio(init_capital=init_capital)
 
         super().__init__(
             strategy=strategy,
             data_src=DataFrameDataSource(
                 dataframe=df,
-                symbol= config.system.symbols[0],
+                symbol= symbol,
                 timestamp_col= timestamp_col,
                 open_col= open_col,
                 high_col= high_col,

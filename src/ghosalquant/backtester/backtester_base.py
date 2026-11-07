@@ -1,4 +1,5 @@
 import asyncio
+from pathlib import Path
 from typing import final, Iterable
 
 from ..data_layer.datasource_factory import datasource_from_config
@@ -36,8 +37,8 @@ class Backtester:
         if portfolio is None:
             portfolio = BasicPortfolio(init_capital=10_000.0, contracts=contracts)
 
-        if risk_manager is None and config is not None and config.system.use_risk_manager:
-            risk_manager = build_risk_manager(config.risk)
+        if risk_manager is None:
+            risk_manager = _risk_manager_for(config)
 
         self.execution_system = ExecutionSystem(
             data_src = data_src,
@@ -55,7 +56,8 @@ class Backtester:
     def from_config(cls,
                     *,
                     strategy: Strategy,
-                    config_path: str,
+                    config_path: str | None = None,
+                    config: Config | None = None,
 
                     # Optional overrides
                     signal_destination: SignalSink | None = None,
@@ -65,14 +67,13 @@ class Backtester:
                     contracts: ContractRegistry | None = None,
         ) -> "Backtester":
 
-            cfg = load_config(config_path)
+            if config is None and config_path is None:
+                raise TypeError("from_config() needs config= or config_path=")
+            cfg = _resolve_config(config, config_path)
             data_src = datasource_from_config(cfg, contracts=contracts)
 
             if portfolio is None:
                 portfolio = BasicPortfolio(init_capital=float(init_capital), contracts=contracts)
-
-            if risk_manager is None and cfg.system.use_risk_manager:
-                risk_manager = build_risk_manager(cfg.risk)
 
             return cls(
                 strategy=strategy,
@@ -127,3 +128,21 @@ class Backtester:
             return asyncio.run(self.run_async())
 
         raise RuntimeError("Cannot run backtest synchronously within an existing event loop. Please use run_async() instead.")
+
+
+def _resolve_config(config: Config | None, config_path: str | Path | None) -> Config:
+    """The ``Config`` object if given, else the YAML file, else the defaults."""
+    if config is not None and config_path is not None:
+        raise ValueError("Pass config or config_path, not both.")
+    if config is not None:
+        return config
+    if config_path is not None:
+        return load_config(config_path)
+    return Config()
+
+
+def _risk_manager_for(config: Config | None) -> RiskManager:
+    # A Portfolio needs a RiskManager, so with the flag off this one applies no rules.
+    if config is not None and config.system.use_risk_manager:
+        return build_risk_manager(config.risk)
+    return RiskManager(rules=[])
