@@ -96,6 +96,11 @@ class Portfolio(Protocol):
         ...
 
     @property
+    def fill_count(self) -> int | None:
+        """Fills booked, not counting any refused; ``None`` if this portfolio doesn't count them."""
+        ...
+
+    @property
     def total_pnl(self) -> float:
         return self.realised_pnl + self.unrealised_pnl
 
