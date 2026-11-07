@@ -16,19 +16,34 @@ class ConfigError(Exception):
 @dataclass(frozen=True, slots=True)
 class RiskRuleConfig:
     name: str
-    params: dict
+    params: dict = field(default_factory=dict)
 
 @dataclass(frozen=True, slots=True)
 class RiskConfig:
-    rules: list[RiskRuleConfig]
+    rules: list[RiskRuleConfig] = field(default_factory=list)
+    # Share of equity a target-weight buy leaves in cash, for the move before it fills and costs.
+    cash_buffer: float = 0.01
+
+    def __post_init__(self) -> None:
+        if not 0.0 <= self.cash_buffer < 1.0:
+            raise ConfigError(f"RISK.cash_buffer must be in [0, 1). Got: {self.cash_buffer}")
 
 @dataclass(frozen=True, slots=True)
 class SystemConfig:
-    symbols: list[str]
-    main_timeframe: str
-    execution_timeframe: str
-    fresh_data: bool
-    use_risk_manager: bool
+    symbols: list[str] = field(default_factory=lambda: ["ASSET"])
+    main_timeframe: str = "1D"
+    execution_timeframe: str = "1D"
+    fresh_data: bool = False
+    # False runs with no risk rules, ignoring RISK.
+    use_risk_manager: bool = True
+
+    def __post_init__(self) -> None:
+        if isinstance(self.symbols, str):
+            object.__setattr__(self, "symbols", [self.symbols])
+        if not self.symbols:
+            raise ConfigError("SYSTEM.symbols must name at least one symbol.")
+        _validate_tf(self.main_timeframe, "SYSTEM.main_timeframe")
+        _validate_tf(self.execution_timeframe, "SYSTEM.execution_timeframe")
 
 @dataclass(frozen=True, slots=True)
 class YFinanceConfig:
@@ -177,18 +192,33 @@ class IBKRBrokerConfig:
 
 @dataclass(frozen=True, slots=True)
 class BrokerConfig:
-    type: BrokerType
-    mode: BrokerMode
+    type: BrokerType = BrokerType.SIMULATED
+    mode: BrokerMode = BrokerMode.PAPER
     sim: SimBrokerConfig | None = None
     ibkr: IBKRBrokerConfig | None = None
 
+    def __post_init__(self) -> None:
+        # The same simulation a YAML config with no sim block gets.
+        if self.type == BrokerType.SIMULATED and self.sim is None:
+            object.__setattr__(self, "sim", SimBrokerConfig())
+
 @dataclass(frozen=True, slots=True)
 class Config:
-    system: SystemConfig
-    data: DataConfig
-    time_range: TimeConfig
-    risk: RiskConfig
-    broker: BrokerConfig | None = None
+    """
+    Everything a run is configured with. ``Config()`` is a working backtest setup, and
+    ``Config.from_yaml`` reads one from a file. ``data`` and ``time_range`` are checked only
+    when bars are loaded from a source.
+    """
+    system: SystemConfig = field(default_factory=SystemConfig)
+    data: DataConfig | None = None
+    time_range: TimeConfig | None = None
+    risk: RiskConfig = field(default_factory=RiskConfig)
+    broker: BrokerConfig | None = field(default_factory=BrokerConfig)
+
+    @classmethod
+    def from_yaml(cls, file_path: str | Path) -> "Config":
+        """Read a config file. See ``load_config``."""
+        return load_config(file_path)
 
 # Validation Helpers
 def _assert_map(raw: Any, path: str) -> dict[str, Any]:
@@ -338,21 +368,13 @@ def _parse_event_kinds(raw: Any) -> tuple[str, ...]:
     return tuple(kinds)
 
 
-def _default_broker_config() -> BrokerConfig:
-    return BrokerConfig(
-        type=BrokerType.SIMULATED,
-        mode=BrokerMode.PAPER,
-        sim=SimBrokerConfig(),
-    )
-
-
 def _parse_broker_config(raw: Any) -> BrokerConfig:
     if raw is None:
-        return _default_broker_config()
+        return BrokerConfig()
 
     if isinstance(raw, list):
         if len(raw) == 0:
-            return _default_broker_config()
+            return BrokerConfig()
         if len(raw) != 1:
             raise ConfigError("BROKERAGE currently supports exactly one broker entry.")
         raw = raw[0]
@@ -373,6 +395,94 @@ def _parse_broker_config(raw: Any) -> BrokerConfig:
         mode=broker_mode,
         ibkr=_parse_ibkr_broker_config(broker_raw.get("ibkr")),
     )
+
+def _parse_data_config(raw: Any) -> DataConfig:
+    data_raw = _assert_map(raw, "DATA")
+
+    data_source_str = _assert_str(data_raw.get("source"), "DATA.source").strip().lower()
+    if data_source_str == "yfinance":
+        data_source = DataSrcType.YFINANCE
+    elif data_source_str == "polygon":
+        data_source = DataSrcType.POLYGON
+    elif data_source_str == "live_ibkr":
+        data_source = DataSrcType.LIVE_IBKR
+    elif data_source_str == "live_alpaca":
+        data_source = DataSrcType.LIVE_ALPACA
+    else:
+        raise ConfigError(f"DATA.source must be one of {[str(e) for e in DataSrcType]}. Got: {data_source_str}")
+
+    yfinance_cfg: YFinanceConfig | None = None
+    polygon_cfg: PolygonConfig | None = None
+    live_ibkr_cfg: LiveIBKRConfig | None = None
+    alpaca_cfg: AlpacaConfig | None = None
+
+    if data_source == DataSrcType.YFINANCE: # TODO: Add yfinance config options in the future if needed
+        yf_raw = data_raw.get("yfinance", {}) or {}
+        _assert_map(yf_raw, "DATA.yfinance")
+        yfinance_cfg = YFinanceConfig()
+
+    elif data_source == DataSrcType.POLYGON:
+        polygon_raw = _assert_map(data_raw.get("polygon"), "DATA.polygon")
+
+        api_key = _secret(polygon_raw, "api_key", "POLYGON_API_KEY", "DATA.polygon")
+        parquet_path = _assert_str(polygon_raw.get("parquet_path"), "DATA.polygon.parquet_path")
+        base_res = _validate_tf(str(polygon_raw.get("base_resolution", "1Min")), "DATA.polygon.base_resolution")
+
+        polygon_cfg = PolygonConfig(
+            api_key=api_key,
+            parquet_path=parquet_path,
+            base_resolution=base_res,
+        )
+    elif data_source == DataSrcType.LIVE_IBKR:
+        live_ibkr_raw = data_raw.get("live_ibkr", {}) or {}
+        live_ibkr_cfg = _parse_live_ibkr_config(live_ibkr_raw)
+    elif data_source == DataSrcType.LIVE_ALPACA:
+        alpaca_cfg = _parse_alpaca_config(data_raw.get("alpaca", {}) or {})
+
+    return DataConfig(
+        source=data_source,
+        yfinance=yfinance_cfg,
+        polygon=polygon_cfg,
+        live_ibkr=live_ibkr_cfg,
+        alpaca=alpaca_cfg,
+        static=_parse_static_config(data_raw.get("static", {}) or {}),
+        events=_parse_event_kinds(data_raw.get("events")),
+    )
+
+
+def _parse_time_config(raw: Any) -> TimeConfig:
+    time_range = _assert_map(raw, "TIME_RANGE")
+    return TimeConfig(
+        start_date=datetime.strptime(time_range["start_date"], "%Y-%m-%d").date(),
+        end_date=datetime.strptime(time_range["end_date"], "%Y-%m-%d").date(),
+        session_start_time=datetime.strptime(time_range["session_start_time"], "%H:%M").time(),
+        session_end_time=datetime.strptime(time_range["session_end_time"], "%H:%M").time()
+    )
+
+
+def _parse_risk_config(raw: Any) -> RiskConfig:
+    risk_raw = _assert_map(raw or {}, "RISK")
+    rules_raw = risk_raw.get("rules", []) or []
+    if not isinstance(rules_raw, list):
+        raise ConfigError("RISK.rules must be a list.")
+
+    rules: list[RiskRuleConfig] = []
+    for rule_cfg in rules_raw:
+        if not isinstance(rule_cfg, dict):
+            raise ConfigError("Each RISK rule must be a mapping.")
+
+        if "name" not in rule_cfg:
+            raise ConfigError("Each RISK rule must define a 'name' field.")
+
+        rule_params = dict(rule_cfg)
+        rule_name = rule_params.pop("name")
+        rules.append(RiskRuleConfig(name=str(rule_name), params=rule_params))
+
+    return RiskConfig(
+        rules=rules,
+        cash_buffer=float(risk_raw.get("cash_buffer", RiskConfig().cash_buffer)),
+    )
+
 
 # Config loader
 def load_config(file_path: str | Path) -> Config:
@@ -412,107 +522,16 @@ def load_config(file_path: str | Path) -> Config:
             main_timeframe=main_tf,
             execution_timeframe=exec_tf,
             fresh_data=bool(system.get("fresh_candles", False)),
-            use_risk_manager=bool(system.get("use_risk_manager", False))
+            use_risk_manager=bool(system.get("use_risk_manager", True))
         )
 
-        # ----- Data ----- #
-        data_raw = _assert_map(raw.get("DATA"), "DATA")
-
-        data_source_str = _assert_str(data_raw.get("source"), "DATA.source").strip().lower()
-        if data_source_str == "yfinance":
-            data_source = DataSrcType.YFINANCE
-        elif data_source_str == "polygon":
-            data_source = DataSrcType.POLYGON
-        elif data_source_str == "live_ibkr":
-            data_source = DataSrcType.LIVE_IBKR
-        elif data_source_str == "live_alpaca":
-            data_source = DataSrcType.LIVE_ALPACA
-        else:
-            raise ConfigError(f"DATA.source must be one of {[str(e) for e in DataSrcType]}. Got: {data_source_str}")
-
-        yfinance_cfg: YFinanceConfig | None = None
-        polygon_cfg: PolygonConfig | None = None
-        live_ibkr_cfg: LiveIBKRConfig | None = None
-        alpaca_cfg: AlpacaConfig | None = None
-
-        if data_source == DataSrcType.YFINANCE: # TODO: Add yfinance config options in the future if needed
-            yf_raw = data_raw.get("yfinance", {}) or {}
-            _assert_map(yf_raw, "DATA.yfinance")
-            yfinance_cfg = YFinanceConfig()
-
-        elif data_source == DataSrcType.POLYGON:
-            polygon_raw = _assert_map(data_raw.get("polygon"), "DATA.polygon")
-
-            api_key = _secret(polygon_raw, "api_key", "POLYGON_API_KEY", "DATA.polygon")
-            parquet_path = _assert_str(polygon_raw.get("parquet_path"), "DATA.polygon.parquet_path")
-            base_res = _validate_tf(str(polygon_raw.get("base_resolution", "1Min")), "DATA.polygon.base_resolution")
-
-            polygon_cfg = PolygonConfig(
-                api_key=api_key,
-                parquet_path=parquet_path,
-                base_resolution=base_res,
-            )
-        elif data_source == DataSrcType.LIVE_IBKR:
-            live_ibkr_raw = data_raw.get("live_ibkr", {}) or {}
-            live_ibkr_cfg = _parse_live_ibkr_config(live_ibkr_raw)
-        elif data_source == DataSrcType.LIVE_ALPACA:
-            alpaca_cfg = _parse_alpaca_config(data_raw.get("alpaca", {}) or {})
-
-        data_config = DataConfig(
-            source=data_source,
-            yfinance=yfinance_cfg,
-            polygon=polygon_cfg,
-            live_ibkr=live_ibkr_cfg,
-            alpaca=alpaca_cfg,
-            static=_parse_static_config(data_raw.get("static", {}) or {}),
-            events=_parse_event_kinds(data_raw.get("events")),
-        )
-
-        # ----- Time ----- #
-        time_range = _assert_map(raw.get("TIME_RANGE"), "TIME_RANGE")
-
-        time_config = TimeConfig(
-            start_date=datetime.strptime(time_range["start_date"], "%Y-%m-%d").date(),
-            end_date=datetime.strptime(time_range["end_date"], "%Y-%m-%d").date(),
-            session_start_time=datetime.strptime(time_range["session_start_time"], "%H:%M").time(),
-            session_end_time=datetime.strptime(time_range["session_end_time"], "%H:%M").time()
-        )
-
-        # ----- Risk (optional) ----- #
-        risk_raw = raw.get("RISK", {}) or {}
-        risk_raw = _assert_map(risk_raw, "RISK")
-        rules_raw = risk_raw.get("rules", []) or []
-        if not isinstance(rules_raw, list):
-            raise ConfigError("RISK.rules must be a list.")
-
-        rules: list[RiskRuleConfig] = []
-        for rule_cfg in rules_raw:
-            if not isinstance(rule_cfg, dict):
-                raise ConfigError("Each RISK rule must be a mapping.")
-
-            if "name" not in rule_cfg:
-                raise ConfigError("Each RISK rule must define a 'name' field.")
-
-            rule_name = rule_cfg["name"]
-
-            rule_params = dict(rule_cfg)
-            rule_params.pop("name")
-
-            rules.append(
-                RiskRuleConfig(
-                    name=str(rule_name),
-                    params=rule_params,
-                )
-            )
-
-        broker_config = _parse_broker_config(raw.get("BROKERAGE"))
-
+        # DATA and TIME_RANGE are optional: a DataFrame backtest uses neither.
         return Config(
             system=system_config,
-            data=data_config,
-            time_range=time_config,
-            risk=RiskConfig(rules=rules),
-            broker=broker_config,
+            data=None if raw.get("DATA") is None else _parse_data_config(raw["DATA"]),
+            time_range=None if raw.get("TIME_RANGE") is None else _parse_time_config(raw["TIME_RANGE"]),
+            risk=_parse_risk_config(raw.get("RISK")),
+            broker=_parse_broker_config(raw.get("BROKERAGE")),
         )
 
     except FileNotFoundError:

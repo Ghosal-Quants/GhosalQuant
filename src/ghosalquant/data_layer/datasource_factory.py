@@ -6,11 +6,17 @@ from ghosalquant.core.contracts import ContractRegistry
 from ghosalquant.util.config import Config, ConfigError, DataSrcType
 
 def datasource_from_config(cfg: Config, *, contracts: ContractRegistry | None = None):
+    if cfg.data is None:
+        raise ConfigError(
+            "DATA must be a mapping with a source to load market data. "
+            "To backtest a DataFrame you already have, use DataFrameBacktester, which needs no DATA."
+        )
     events = tuple(cfg.data.events) if cfg.data.events else ("bars",)
 
     match cfg.data.source:
         case DataSrcType.YFINANCE:
             _require_bars_only(events, "yfinance")
+            _require_time_range(cfg, "yfinance")
             return YFinanceMultiDataSource(
                 symbols=cfg.system.symbols,
                 start=cfg.time_range.start_date,
@@ -21,6 +27,7 @@ def datasource_from_config(cfg: Config, *, contracts: ContractRegistry | None = 
         case DataSrcType.POLYGON:
             assert cfg.data.polygon is not None
             _require_bars_only(events, "polygon")
+            _require_time_range(cfg, "polygon")
             return ParquetPolygonDataSource(cfg)
         case DataSrcType.LIVE_ALPACA:
             if cfg.data.alpaca is None:
@@ -53,3 +60,8 @@ def _require_bars_only(events: tuple[str, ...], source: str) -> None:
     extra = [kind for kind in events if kind != "bars"]
     if extra:
         raise ConfigError(f"DATA.source '{source}' only provides bars; remove {extra} from DATA.events.")
+
+
+def _require_time_range(cfg: Config, source: str) -> None:
+    if cfg.time_range is None:
+        raise ConfigError(f"TIME_RANGE must be a mapping: DATA.source '{source}' loads history between its dates.")
