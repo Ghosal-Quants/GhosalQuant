@@ -399,6 +399,19 @@ def test_adopting_after_trading_has_started_is_refused():
         portfolio.adopt(25_000.0)
 
 
+def test_a_buy_the_broker_filled_beyond_cash_is_still_booked():
+    # A margined future fills far beyond its cash; dropping the fill would leave the portfolio flat while the broker
+    # holds the position.
+    portfolio = BasicPortfolio(init_capital=1_000.0)
+    asyncio.run(portfolio.process_fill(Fill(
+        time_stamp=_ADOPT_T0, symbol="AAPL", side=SignalType.BUY, quantity=50.0, price=100.0,
+    )))
+
+    assert portfolio.open_qty_by_symbol["AAPL"] == 50.0
+    assert portfolio.cash_balance == pytest.approx(-4_000.0)
+    assert portfolio.current_equity == pytest.approx(1_000.0)
+
+
 # ----- An execution is applied once ----- #
 
 def test_the_same_execution_delivered_twice_is_applied_once():

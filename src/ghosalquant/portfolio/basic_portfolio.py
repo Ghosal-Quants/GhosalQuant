@@ -267,9 +267,8 @@ class BasicPortfolio(Portfolio):
         long_side = fill.side is SignalType.BUY
         notional: float = fill.price * quantity * self._multiplier(fill.symbol)
 
-        if long_side and notional + commission > self._cash:
-            return
-
+        # A fill already happened at the broker: booking only what cash covers would leave the portfolio holding
+        # less than the account. What may be bought on how much cash is a risk rule's business, as for shorts.
         self._cash += (-notional if long_side else notional) - commission
         self._fees_paid += commission
         self._realised_pnl -= commission
