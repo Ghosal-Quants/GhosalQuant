@@ -20,6 +20,7 @@ from ghosalquant.util.config import (
     RiskConfig,
     SimBrokerConfig,
 )
+from ghosalquant.risk.builder import build_risk_manager
 
 def test_load_config():
     config: Config = load_config(Path(__file__).with_name("test_config.yaml"))
@@ -495,3 +496,12 @@ def test_system_config_takes_one_symbol_as_a_string_and_checks_timeframes():
         SystemConfig(main_timeframe="1D ")
     with pytest.raises(ConfigError, match="symbols"):
         SystemConfig(symbols=[])
+
+
+def test_risk_cash_buffer_is_read_and_reaches_the_risk_manager():
+    config = _load(_SYSTEM_ONLY + "RISK:\n  cash_buffer: 0.05\n")
+
+    assert config.risk.cash_buffer == 0.05
+    assert build_risk_manager(config.risk).cash_buffer == 0.05
+    with pytest.raises(ConfigError, match="cash_buffer"):
+        RiskConfig(cash_buffer=1.5)

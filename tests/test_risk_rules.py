@@ -821,3 +821,92 @@ def test_a_target_weight_counts_orders_still_resting():
 
 def test_a_target_weight_without_equity_is_dropped():
     assert RiskManager().evaluate(_weighted(0.5), RiskContext()) is None
+
+
+def test_a_target_weight_buy_is_capped_at_what_cash_covers():
+    context = RiskContext(current_equity=10_000.0, cash=10_000.0)
+
+    # A full weight is 100 shares, but 1% of equity stays in cash for the move before the fill.
+    order = RiskManager().evaluate(_weighted(1.0), context)
+    assert order is not None
+    assert order.metadata[metadata_keys.TARGET_QUANTITY] == pytest.approx(100.0)
+    assert order.quantity == pytest.approx(99.0)
+
+    order = RiskManager(cash_buffer=0.0).evaluate(_weighted(1.0), context)
+    assert order is not None
+    assert order.quantity == pytest.approx(100.0)
+
+
+def test_a_target_weight_buy_leaves_cash_for_buys_still_resting():
+    context = RiskContext(
+        current_equity=10_000.0, cash=10_000.0, open_orders=(resting("MSFT", 40.0, 100.0),),
+    )
+
+    # The resting MSFT buy will spend $4,000 of the $9,900 the buffer leaves.
+    order = RiskManager().evaluate(_weighted(1.0), context)
+    assert order is not None
+    assert order.quantity == pytest.approx(59.0)
+
+
+def test_buying_back_a_short_is_not_capped_by_cash():
+    # Shorting 50 at $100 left $15,000 cash against $10,000 equity.
+    context = RiskContext(current_equity=10_000.0, cash=15_000.0, open_qty_by_symbol={"AAPL": -50.0})
+
+    flat = RiskManager().evaluate(_weighted(0.0), context)
+    assert flat is not None
+    assert flat.quantity == pytest.approx(50.0)
+
+    # Covering costs $5,000; the long leg gets what is left after the $100 buffer.
+    long = RiskManager().evaluate(_weighted(1.0), context)
+    assert long is not None
+    assert long.quantity == pytest.approx(50.0 + 99.0)
+
+
+def test_a_target_weight_with_no_cash_for_a_new_position_warns_once(caplog):
+    manager = RiskManager()
+    context = RiskContext(current_equity=10_000.0, cash=0.0)
+
+    with caplog.at_level(logging.WARNING, logger="ghosalquant.risk.risk_manager"):
+        assert manager.evaluate(_weighted(0.5), context) is None
+        assert manager.evaluate(_weighted(0.5), context) is None
+
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "covers none of it" in warnings[0].getMessage()
+
+
+def test_a_held_position_cash_can_not_add_to_is_left_quietly(caplog):
+    # Fully invested at the buffer: the shortfall to a full weight is expected, not news.
+    context = RiskContext(current_equity=10_000.0, cash=100.0, open_qty_by_symbol={"AAPL": 99.0})
+
+    with caplog.at_level(logging.WARNING, logger="ghosalquant.risk.risk_manager"):
+        assert RiskManager().evaluate(_weighted(1.0), context) is None
+
+    assert caplog.records == []
+
+
+def test_a_signal_nothing_sizes_is_dropped_with_one_warning(caplog):
+    manager = RiskManager(rules=[])
+    signal = Signal(time_stamp=T0, symbol="AAPL", signal_type=SignalType.BUY, ref_price=100.0)
+
+    with caplog.at_level(logging.WARNING, logger="ghosalquant.risk.risk_manager"):
+        assert manager.evaluate(signal, RiskContext()) is None
+        assert manager.evaluate(signal, RiskContext()) is None
+
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "no quantity or TARGET_WEIGHT" in warnings[0].getMessage()
+
+
+def test_a_target_weight_already_met_is_dropped_without_a_warning(caplog):
+    context = RiskContext(current_equity=10_000.0, open_qty_by_symbol={"AAPL": 50.0})
+
+    with caplog.at_level(logging.WARNING, logger="ghosalquant.risk.risk_manager"):
+        assert RiskManager().evaluate(_weighted(0.5), context) is None
+
+    assert caplog.records == []
+
+
+def test_cash_buffer_must_be_a_fraction():
+    with pytest.raises(ValueError, match="cash_buffer"):
+        RiskManager(cash_buffer=1.0)

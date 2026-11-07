@@ -59,6 +59,7 @@ class RiskContext:
     current_drawdown: float | None = None  # -0.05 means 5% below peak
     peak_equity: float | None = None
     current_equity: float | None = None
+    cash: float | None = None
     price_history: dict[str, list[float]] | None = None # recent close prices per symbol
     open_orders: tuple[OpenOrderView, ...] = ()
     contracts: ContractRegistry = field(default_factory=ContractRegistry)
