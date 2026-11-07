@@ -2,6 +2,20 @@
 
 ## Tom's System Notes
 
+### What are we actually trying to do?
+- Find ideas for interesting strategies for a given asset class
+- Implement the mathematical theory algorithmically
+- Provide quantitative evidence that they work, over a period of time
+- Execute the orders
+
+### Some existing open source frameworks
+- https://amor71.github.io/LiuAlgoTrader/
+- https://www.backtrader.com/
+- https://github.com/gbeced/basana (crypto orientated)
+- https://github.com/panpanpandas/ultrafinance
+- https://github.com/ematvey/pybacktest
+- https://github.com/mhallsmoore/qstrader
+
 ### Rough components of system
 - Signal generation system
   - Watch market & flag when to trade
@@ -68,8 +82,8 @@ orders, and a broker (simulated or real) handles execution and fills.
           - `on_market_data(bar: Bar) -> Signal | None`: Called by the `ExecutionSystem` for each individual `Bar`
           received from a `DataSource`. Returns a `Signal` or `None`.
           - `on_end() -> None`: Called after all market data has been processed.
-        - Provides a built-in `calculate_quantity(confidence) -> float | None` helper that linearly maps confidence to
-          a quantity between `min_qty` and `max_qty` (configurable via the constructor).
+        - Provides a built-in `calculate_quantity(confidence) -> float | None` helper that returns `max_qty` when
+          confidence is at least `confidence_threshold`, else `min_qty` (all three set in the constructor).
     - (Optionally) Backtester (e.g. `ghosalquant.backtester.backtester_base` -> `Backtester` class)
       - Can be created directly or from a config file via the `Backtester.from_config()` class method.
       - Orchestrates the full backtesting pipeline: wires together a `DataSource`, `ExecutionSystem`, `Portfolio`,
@@ -86,7 +100,7 @@ orders, and a broker (simulated or real) handles execution and fills.
     - Data source (e.g. `ghosalquant.data_layer.yfinance_datasource` -> `YFinanceDataSource`)
       - Inherits from abstract `DataSource` base class (`ghosalquant.data_layer.datasource_base`).
         - Implements:
-          - `async __aiter__() -> AsyncIterable[Bar]`: Yields `Bar` instances asynchronously.
+          - `async __aiter__() -> AsyncIterable[MarketEvent]`: Yields `Bar`, `OrderBook` and `PublicTrade` events.
     - Execution system (`ghosalquant.execution.execution_system` -> `ExecutionSystem` class)
       - Takes `DataSource`, `Strategy`, and optionally `SignalSink`, `RiskManager`, `Portfolio`, and `Broker`.
       - Validates that a `Portfolio` is always accompanied by a `RiskManager` and a `Broker`.
@@ -151,7 +165,10 @@ A `DataSource` yields `MarketEvent`s: `Bar`s, `OrderBook`s, and `PublicTrade`s i
 The `RiskContext` and `StrategyContext` for an event are built once, lazily, and shared by every signal it produces.
 
 ## 2 Core types
-The primary types used throughout the system can be imported from `ghosalquant.types`.
+The primary types used throughout the system are defined in `ghosalquant.core.types`. The ones a strategy works
+with (`Bar`, `OrderBook`, `BookLevel`, `PublicTrade`, `Signal`, `SignalType`, `Liquidity`, `Order`, `Fill`, `Trade`,
+`BacktestKPMs`, `EquityPoint`) are also exported from `ghosalquant`, with `metadata_keys` and the module itself:
+`from ghosalquant import Bar, Signal, metadata_keys, types`.
 
 ### 2.1 Bar
 ```python
@@ -242,13 +259,15 @@ trade based on a given mark price.
 ```python
 @dataclass(frozen=True, slots=True)
 class BacktestKPMs:
-    total_trades: int
+    total_trades: int                            # closed lots, one per lot (or part) an opposite fill closed
     total_wins: int
     total_losses: int
     win_rate_pct: float
     realised_pnl: float
     unrealised_pnl: float
     total_pnl: float
+    open_positions: int = 0                      # symbols still held at the end
+    fills: int | None = None                     # fills the portfolio booked
     # Risk-adjusted metrics, filled in by calculate_kpms; None when the equity path cannot support them.
     max_drawdown: float | None = None            # negative fraction, -0.2 is 20% below the peak
     annualized_return_pct: float | None = None
@@ -283,9 +302,14 @@ class OrderDraft:
 class RiskContext:
     open_positions: int = 0
     open_qty_by_symbol: dict[str, float]
+    position_cost_by_symbol: dict[str, float]
     current_drawdown: float | None = None
     peak_equity: float | None = None
+    current_equity: float | None = None
+    cash: float | None = None
     price_history: dict[str, list[float]] | None = None
+    open_orders: tuple[OpenOrderView, ...] = ()
+    contracts: ContractRegistry
 ```
 
 ### 2.8 Contracts
@@ -440,7 +464,7 @@ then bar — so a print can fill a resting order before the strategy sees the po
 | `ParquetPolygonDataSource` | `data_layer.parquet_polygon_datasource` | Reads Polygon OHLCV data from a local `.parquet` file. Supports date/session filtering and timeframe resampling. Driven by `Config`. |
 | `DoltOptionsDataSource` | `data_layer.dolt_datasource` | Option chains from the free `post-no-preference/options` database on DoltHub (`dolt clone` it, ~8 GB). Real end-of-day bid and ask from 2019 across ~2,300 underlyings, so the spread is measured rather than modelled. The table carries no spot, so the underlier is recovered from the chain by put-call parity — within 0.2% of SPY's close on a checked month. Samples about three sessions a week, not every one. |
 | `CboeEODDataSource` | `data_layer.cboe_datasource` | Cboe DataShop "Option EOD Summary" (`UnderlyingOptionsEODCalcs_*`), a paid daily file. The only source here with real NBBO: two quote snapshots a session with sizes, open interest, and the underlier's own bid and ask in the same rows, so nothing about the spread is modelled. Reads the download as it ships, zip and all. |
-| `NSEDataSource` | `data_layer.nse_datasource` | NSE India end-of-day futures and options from an exchange bhavcopy: one `Bar` per contract per session, the near future emitted under the plain symbol so something tradeable stands in for the index, and a `ContractRegistry` built from the chain. Settlement prices only — the file carries no bid or ask, so none are invented. `datasets/nse_nifty_fo_2019.csv.gz` ships 69 real sessions. |
+| `NSEDataSource` | `data_layer.nse_datasource` | NSE India end-of-day futures and options from an exchange bhavcopy: one `Bar` per contract per session, the near future emitted under the plain symbol so something tradeable stands in for the index, and a `ContractRegistry` built from the chain. Settlement prices only — the file carries no bid or ask, so none are invented. |
 | `LiveAlpacaDataSource` | `data_layer.live_alpaca_datasource` | Live Alpaca data through the official `alpaca-py` SDK, an optional dependency (`pip install "ghosalquant[alpaca]"`) imported only when the stream is opened. `feed` picks the market as well as the quality: `iex`/`sip`/`delayed_sip` stream equities, `opra`/`indicative` stream options and carry no bars. Alpaca publishes top of book only, so `order_books` yields one level a side. Option symbols arrive unpadded (`AAPL240315C00172500`) and are converted to the padded OCC form the registry is keyed by. |
 | `LiveIBKRDataSource` | `data_layer.live_ibkr_datasource` | Streams live IBKR data via `ib_insync` and steps down to delayed data when live market data is unavailable. `events` selects `bars` (throttled ticks -> `Bar`), `order_books` (`reqMktDepth` with `depth` rows -> `OrderBook`, at most every `book_resolution_sec`), and `trades` (tick-by-tick -> `PublicTrade`). Given a `ContractRegistry` it subscribes to registered options as options and emits them under their own symbol rather than their underlier's ticker. |
 | `LivePolygonDataSource` | `data_layer.live_polygon_datasource` | Streams live (or 15-min delayed) data from Polygon's WebSocket API with automatic reconnection. `events` selects `bars` (`A`/`AM`, `1SEC` or `1MIN`), `quotes` (`Q` -> one-level `OrderBook`), and `trades` (`T` -> `PublicTrade`). |
@@ -449,9 +473,11 @@ then bar — so a print can fill a resting order before the strategy sees the po
 | `ShockedDataSource` | `data_layer.shocks` | Wraps any source and moves prices or thins depth, so a session can be replayed through a market that did not happen. |
 
 The `datasource_factory.datasource_from_config(cfg)` function creates the appropriate data source from a `Config`
-object (currently supports yfinance, Polygon parquet, and live IBKR). `DATA.events` (default `["bars"]`) selects the
-event kinds; only `live_ibkr` can provide `order_books` and `trades`, and the factory rejects them for bar-only
-sources.
+object: `yfinance` (`YFinanceMultiDataSource`), `polygon` (`ParquetPolygonDataSource`), `live_ibkr` and
+`live_alpaca`. It raises `ConfigError` when `DATA` is missing, and when `TIME_RANGE` is missing for `yfinance` or
+`polygon`. `DATA.events` (default `["bars"]`) selects the event kinds; only the live sources can provide
+`order_books` and `trades`, and the factory rejects them for bar-only sources. The other sources in the table are
+constructed directly.
 
 ## 4 Strategies
 Strategies are subclasses of the abstract `Strategy` base class from `ghosalquant.execution.strategy_base`.
@@ -514,8 +540,8 @@ base class for strategies driven by books and prints rather than bars.
 ### 4.1 Included Benchmark Strategies
 | Class | Module | Description |
 |---|---|---|
-| `BenchmarkBuyAndHold` | `execution.benchmark_buy_and_hold` | Sends a single `BUY` signal per symbol on first bar, then holds. Optionally includes a catastrophic stop loss. |
-| `BenchmarkTrendVolTarget` | `execution.benchmark_trend_vol_target` | EMA crossover trend-following strategy with volatility targeting and position sizing. Uses EMA-20/80/200 and exponentially weighted volatility. |
+| `BenchmarkBuyAndHold` | `bench.benchmark_buy_and_hold` | Sends a single `BUY` signal per symbol on first bar, then holds. Optionally includes a catastrophic stop loss. |
+| `BenchmarkTrendVolTarget` | `bench.benchmark_trend_vol_target` | EMA crossover trend-following strategy with volatility targeting and position sizing. Uses EMA-20/80/200 and exponentially weighted volatility. |
 
 ## 5 Signal Sinks
 Signal sinks implement the `SignalSink` protocol from `ghosalquant.execution.sinks`.
@@ -546,9 +572,13 @@ Risk management sits between signal generation and order execution. The `RiskMan
 
 ### 6.1 How it works
 1. A `Signal` is converted into a mutable `OrderDraft`.
-2. Each `RiskRule` in the chain calls `apply(draft, context) -> bool`.
+2. A `TARGET_WEIGHT` in the signal's metadata becomes the trade that brings the position to that share of equity,
+   net of what is held and resting. A buy is capped at what `RiskContext.cash` pays for, keeping `cash_buffer`
+   (default 1%) of equity unspent for the move before it fills: the portfolio refuses a fill it can't afford.
+3. Each `RiskRule` in the chain calls `apply(draft, context) -> bool`.
    - Rules can mutate the draft (e.g. resize quantity) or return `False` to block the order entirely.
-3. If all rules pass and the draft has a positive quantity, an immutable `Order` is created and returned.
+4. If all rules pass and the draft has a positive quantity, an immutable `Order` is created and returned. A draft
+   that still has no quantity is dropped with a warning, once per symbol.
 
 ### 6.2 Available Risk Rules
 | Rule | Description |
@@ -561,6 +591,7 @@ Risk management sits between signal generation and order execution. The `RiskMan
 | `IntegerQuantity` | Rounds the draft down to whole tradable units (`lot_size`), dropping one that rounds away. |
 | `SignalQuantityCap` | Holds a sizer to the `max_quantity` the signal asked for, so capital-based sizing cannot exceed the size the strategy could actually see. |
 | `SymbolCapitalFractionSizer` | Sizes a `BUY` by the money it should spend rather than the units it should buy, topping up towards each symbol's share of capital. `presized_key` leaves a buy sized from its own budget alone. |
+| `FractionalKellySizer` | Sizes a `BUY` at `fraction` of the Kelly stake computed from the signal's `confidence`, `take_profit` and `stop_loss`, capped at `max_notional_fraction` of sizing capital. Blocks a buy with no edge. |
 | `MaxSymbolExposure` | Caps one symbol's notional as a fraction of sizing capital, counting resting buys and charging a taker's fee (or the order's `RISK_UNIT_COST`) into the ceiling. Trims rather than blocks where there is room. |
 | `CashAllocationRule` | Keeps dry powder: trims a `BUY` to the tightest of the account, symbol, bucket and per-order ceilings on how much may sit in resting buys. |
 | `TickRounding` | Rounds a limit price to one the venue accepts. A buy floors and a sell ceilings, so it can only move the price in the trader's favour. `tick_size_by_symbol` overrides the default per instrument. |
@@ -591,17 +622,24 @@ cancelling is the caller's, through `Broker.cancel_open_orders`.
 
 ### 6.3 Building from Config
 `build_risk_manager(risk_config)` in `ghosalquant.risk.builder` constructs a `RiskManager` from a `RiskConfig`
-(parsed from the `RISK` section of `config.yaml`).
+(parsed from the `RISK` section of `config.yaml`), with the rules in list order and `cash_buffer`. A rule's `name`
+is its class name, except `CashAllocation` for `CashAllocationRule`. The remaining keys are its parameters, named as
+in the constructor (for `CashAllocation`, the `CashAllocationConfig` fields plus `capital` and `reference_capital`).
+An unknown name raises `ValueError`. Callable parameters, and `FractionalKellySizer`, are available only in Python.
+
+`RiskManager(rules=None)` uses `MaxOpenPositions()` and `ConfidenceSizer()`; pass `rules=[]` for none.
 
 ## 7 Backtesting
 Backtesting is handled by the `Backtester` base class from `ghosalquant.backtester.backtester_base`.
 
 ### 7.1 `Backtester`
 - **Constructor**: Accepts `strategy`, `data_src`, and optionally `signal_destination`, `portfolio`, `risk_manager`,
-  and `config`. If no portfolio is given, a `BasicPortfolio` with 10,000 initial capital is created. If
-  `config.system.use_risk_manager` is set, a risk manager is built automatically from config.
-- **`Backtester.from_config(strategy, config_path, ...)`**: Class method that loads a `Config`, creates the
-  appropriate `DataSource` via `datasource_from_config`, and wires everything together.
+  and `config`. If no portfolio is given, a `BasicPortfolio` with 10,000 initial capital is created. If no risk
+  manager is given, one is built from `config.risk` when `config.system.use_risk_manager` is set (the default), and
+  one with no rules otherwise.
+- **`Backtester.from_config(strategy, config_path=..., config=...)`**: Class method that takes a `Config` or loads one
+  from YAML, creates the appropriate `DataSource` via `datasource_from_config`, and wires everything together. The
+  config needs `DATA` and `TIME_RANGE`.
 - **`run() -> BacktestKPMs`**: Runs the backtest synchronously.
 - **`run_async() -> BacktestKPMs`**: Runs the backtest within an existing async event loop.
 - Post-run properties: `equity_curve`, `realised_pnl`, `unrealised_pnl`, `total_pnl`, `kpms`.
@@ -610,7 +648,9 @@ Backtesting is handled by the `Backtester` base class from `ghosalquant.backtest
 A convenience subclass of `Backtester` for when you already have market data in a `pandas.DataFrame`. It:
 - Creates a `DataFrameDataSource` from the DataFrame.
 - Attaches a `DataFrameSink` to annotate the DataFrame with signal/confidence/quantity columns.
-- Loads config from a YAML path for symbol info and risk rules.
+- Takes `config=` (a `Config`), `config_path=` (YAML) or neither (`Config()`), for the broker and risk rules.
+  `DATA` and `TIME_RANGE` are not needed: the DataFrame supplies the bars and dates.
+- Trades the bars as `symbol`, else the first of `SYSTEM.symbols`.
 - Handles `MultiIndex` column flattening (e.g. from multi-ticker yfinance downloads).
 
 ### 7.3 Risk-Adjusted Metrics
@@ -681,6 +721,8 @@ class Portfolio(Protocol):
     def final_balance(self) -> float: ...
     @property
     def open_trades(self) -> Iterable[Trade]: ...   # the open lots, for valuation
+    @property
+    def fill_count(self) -> int | None: ...         # fills booked; None if not counted
 ```
 
 ### 8.1 `BasicPortfolio`
@@ -689,6 +731,11 @@ The default implementation (`ghosalquant.portfolio.basic_portfolio`). Key behavi
   on `SELL` fills using LIFO order. Supports partial closes. A fill carrying an `execution_id` is applied once and
   only once — a venue can report the same execution twice, and applying it again invents a position the account
   never held. Fills without one (a simulated broker has none) are applied as before.
+- **Unaffordable fills are refused.** A fill that opens or adds to a long position and costs more than the cash
+  balance (notional plus commission) is not booked and is logged at `WARNING`. The broker has still filled it, so
+  the two disagree from then on; sizing with `TARGET_WEIGHT` (§6.1) keeps buys within cash.
+- **`fill_count`**: Fills that changed cash or a position, so a refused or duplicate fill is not counted.
+  `calculate_kpms` reports it as `BacktestKPMs.fills`.
 - **Positions are signed.** A fill nets against what is held: it opens, reduces, or reverses through flat, so a
   sell with nothing to sell opens a short rather than doing nothing. That is how selling premium works, and it is
   what `open_qty_by_symbol` being negative means. Margin is not modelled — what may be shorted is a risk rule's
@@ -878,39 +925,47 @@ comparing against `open_order_views` and the account's executions, and getting i
 `IBKRBroker` from a `BrokerConfig` dataclass.
 
 ## 10 Configuration
-`DATA.static` holds where the downloaded parquet datasets live and what the Polygon downloader asks for
-(`agg_multiplier`, `agg_timespan`, `start_lookback_days`). These were read straight from `os.environ` by
-`listEditor` and `staticUpdater`, which put settings in `.env` beside the secrets; they come from the config now,
-and `configure(settings)` points those modules at a loaded one. Their defaults sit beside the code rather than
-under the working directory, so where a run starts from no longer decides which file gets written.
+The system is configured with a `Config` dataclass from `ghosalquant.util.config`. Every field has a default, so
+`Config()` is a working backtest setup: one symbol (`ASSET`), `1D` bars, a simulated broker with default parameters
+and no risk rules. Build one in Python, or read one from YAML with `Config.from_yaml(path)` (`load_config` is the
+same function). Invalid values raise `ConfigError`.
 
 Credentials come from the environment and nowhere else. `load_config` loads a `.env` first (the one beside the
 config, else the nearest above the working directory) without overriding anything already set, so a real environment
 still wins. `POLYGON_API_KEY`, `ALPACA_API_KEY` and `ALPACA_API_SECRET` are the variables; `.env.example` lists
 every variable the code reads and `.env` is gitignored. A key written into the config file is *refused* rather than
 ignored — ignoring it would leave the key sitting in a file that gets committed sooner or later.
-The system can be configured with a `Config` dataclass, created from a `config.yaml` file and parsed by
-`ghosalquant.util.config.load_config`.
+
+`DATA.static` sets where the downloaded parquet datasets live and what the Polygon downloader requests
+(`agg_multiplier`, `agg_timespan`, `start_lookback_days`). `listEditor` and `staticUpdater` read it through
+`configure(settings)`. The default paths are in the package's `data_layer/data` directory, not the working
+directory.
 
 ### 10.1 Config Structure
 The YAML is split into the following sections:
 
-- **`SYSTEM`**: Execution parameters.
-  - `symbols`: List of ticker symbols.
-  - `main_timeframe`: Timeframe for market data (e.g. `1D`, `1H`, `5Min`).
-  - `execution_timeframe`: Timeframe for signal evaluation.
-  - `fresh_candles`: Whether to re-download/update data before running.
-  - `use_risk_manager`: Whether to enable the built-in risk manager.
-- **`DATA`**: Data source selection and settings.
-  - `source`: `"yfinance"`, `"polygon"`, or `"live_ibkr"`.
-  - `polygon`: Polygon-specific settings (`api_key`, `parquet_path`, `base_resolution`).
-  - `live_ibkr`: IBKR market-data settings (`host`, `port`, `client_id`, `bar_resolution_sec`).
-  - `yfinance`: Currently empty, reserved for future options.
-- **`TIME_RANGE`**: Bounds for backtesting.
+- **`SYSTEM`** (required): Execution parameters.
+  - `symbols`: A ticker or a list of tickers.
+  - `main_timeframe`: Bar timeframe of the `yfinance` source (e.g. `1D`, `1H`, `5Min`).
+  - `execution_timeframe`: Bar timeframe the `polygon` source resamples to, at least its `base_resolution`.
+  - `fresh_candles`: Whether the Polygon parquet source updates its data before running (default `False`).
+  - `use_risk_manager`: Whether to apply the `RISK` rules (default `True`). With `False` the risk manager runs with no
+    rules.
+- **`DATA`** (optional): Data source selection and settings. Only `datasource_from_config` reads it, so a
+  `DataFrameBacktester` doesn't need it.
+  - `source`: `"yfinance"`, `"polygon"`, `"live_ibkr"` or `"live_alpaca"`.
+  - `events`: Event kinds to stream: `"bars"` (default), `"order_books"`, `"trades"`.
+  - `polygon`: `parquet_path`, `base_resolution`. The key comes from `POLYGON_API_KEY`.
+  - `live_ibkr`: `host`, `port`, `client_id`, `bar_resolution_sec`, `depth`, `book_resolution_sec`.
+  - `alpaca`: `endpoint`, `feed`. The key and secret come from `ALPACA_API_KEY` and `ALPACA_API_SECRET`.
+  - `yfinance`: No settings.
+  - `static`: Dataset paths and downloader settings (see above).
+- **`TIME_RANGE`** (optional): Bounds for loading history; required with a `yfinance` or `polygon` source.
   - `start_date`, `end_date`: Date range.
   - `session_start_time`, `session_end_time`: Intraday session window.
-- **`RISK`**: Risk rules applied when `use_risk_manager` is `True`.
+- **`RISK`** (optional): Risk rules applied when `use_risk_manager` is `True`.
   - `rules`: A list of rule definitions, each with a `name` and rule-specific parameters.
+  - `cash_buffer`: Share of equity a `TARGET_WEIGHT` buy leaves in cash (default `0.01`).
 - **`BROKERAGE`** (optional): Broker configuration. If omitted, `load_config()` defaults to a simulated broker with default parameters. `BROKERAGE.type` selects the active broker, and inactive broker-specific sections are ignored.
 
 ### 10.2 Allowed Timeframes
@@ -941,6 +996,7 @@ TIME_RANGE:
   session_end_time: "17:00"
 
 RISK:
+  cash_buffer: 0.01
   rules:
     - name: "MaxOpenPositions"
       max_open_positions: 3
