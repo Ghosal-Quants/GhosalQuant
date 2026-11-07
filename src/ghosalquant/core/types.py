@@ -403,6 +403,7 @@ class OpenOrderState:
 
 @dataclass(frozen=True, slots=True)
 class BacktestKPMs:
+    # Closed lots: one per lot, or part of one, that an opposite fill closed. See open_positions for what is held.
     total_trades: int
     total_wins: int
     total_losses: int
@@ -410,6 +411,10 @@ class BacktestKPMs:
     realised_pnl: float
     unrealised_pnl: float
     total_pnl: float
+
+    # Symbols still held at the end, and fills the portfolio booked (None if it doesn't count them).
+    open_positions: int = 0
+    fills: int | None = None
 
     # Risk-adjusted metrics; None when the equity path cannot support them.
     max_drawdown: float | None = None
@@ -428,6 +433,8 @@ class BacktestKPMs:
 
         return (
             f"Total Trades: {self.total_trades},\n"
+            +f"Open Positions: {self.open_positions},\n"
+            +f"Fills: {'n/a' if self.fills is None else self.fills},\n"
             +f"Total Wins: {self.total_wins},\n"
             +f"Total Losses: {self.total_losses},\n"
             +f"Win Rate (%): {self.win_rate_pct:.2f},\n"
