@@ -191,6 +191,14 @@ is required. To have the library load the bars too, set `DATA` (`yfinance`, `pol
 - `risk_adjusted_metrics(equity_curve, init_capital=...)` for any equity curve.
 - `evaluate_gates(metrics, spec)` for go/no-go checks on a set of metrics.
 
+### Block strategies (`ghosalquant.blocks`)
+- A strategy described as JSON instead of code, for visual editors: rules of the form "when this condition holds,
+  hold this share of equity", built from prices, indicators, comparisons and crossovers.
+- `validate_spec` checks a spec and names where it is wrong; `BlockStrategy` runs one as an ordinary `Strategy`;
+  `run_spec` / `run_spec_async` backtest one on a DataFrame and return a JSON-ready result.
+- The package imports without yfinance, so this runs in a browser under Pyodide. The spec is documented in
+  `ghosalquant/blocks/schema.py`.
+
 ### Recording and state
 - `ghosalquant.recording`: one durable stream per event kind. Each stream is a write-ahead log sealed into verified
   Parquet segments, with books stored only when they change and prints de-duplicated.
@@ -225,6 +233,7 @@ src/ghosalquant/
   recording/      # Recorders and segmented Parquet storage
   state/          # Atomic JSON, versioned state store, SQLite event journal
   util/           # Config, visualisation, KPM calculation, tick rounding
+  blocks/         # JSON strategy spec, validator and BlockStrategy for visual editors
   backtest_ui/    # Prototype GUI (the ui extra)
   compatibility/  # Deprecated LegacyBacktester
 examples/         # Example scripts and a commented config.yaml
