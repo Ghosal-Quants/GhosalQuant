@@ -1,4 +1,3 @@
-import yfinance as yf
 import pandas as pd
 from datetime import date, time
 from typing import AsyncIterable
@@ -49,6 +48,9 @@ class YFinanceMultiDataSource(DataSource):
         if self.timeframe not in _YFINANCE_TFS:
             raise ValueError(f"Unsupported yfinance timeframe: {self.timeframe}. Supported: {sorted(_YFINANCE_TFS)}")
         interval = _YFINANCE_TFS[self.timeframe]
+
+        # Imported here so the package loads where yfinance is not installed, such as in a browser.
+        import yfinance as yf
 
         df = yf.download(
             tickers=" ".join(self.symbols),

@@ -1,6 +1,5 @@
 from datetime import datetime, timedelta
 from typing import AsyncIterable
-import yfinance as yf
 import pandas as pd
 
 from ..core.types import Bar
@@ -45,6 +44,9 @@ class YFinanceDataSource(DataSource):
             self.end = datetime.now()
 
     async def __aiter__(self) -> AsyncIterable[Bar]:
+        # Imported here so the package loads where yfinance is not installed, such as in a browser.
+        import yfinance as yf
+
         data: pd.DataFrame = yf.download(self.symbol, start=self.start, end=self.end, progress=False, auto_adjust=True)
         
         for ts, row in data.iterrows():
