@@ -176,8 +176,8 @@ is required. To have the library load the bars too, set `DATA` (`yfinance`, `pol
 
 ### Portfolio and valuation (`ghosalquant.portfolio`)
 - `BasicPortfolio`: signed positions, LIFO lots, commissions, de-duplication of fills by `execution_id`, and
-  `adopt()` to start from a live account's cash and positions. It refuses a buy fill it can't afford, with a
-  warning.
+  `adopt()` to start from a live account's cash and positions. A buy fill dearer than cash books what cash
+  covers, and `process_fill` returns the fill as booked so the strategy hears only that.
 - `PortfolioValuationEngine`: marked NAV, liquidation equity into displayed bids, and a risk equity capped at cost.
 - `hedging` gives net delta and gamma per underlier and the hedge quantity; `attribution` splits a position's change
   in value into its causes.

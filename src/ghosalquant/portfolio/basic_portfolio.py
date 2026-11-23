@@ -1,3 +1,4 @@
+import dataclasses
 import logging
 from datetime import datetime
 from typing import Iterable, Mapping
@@ -82,11 +83,17 @@ class BasicPortfolio(Portfolio):
         self._peak_equity = self._init_capital
         self._accounting_version += 1
 
-    async def process_fill(self, fill: Fill) -> None:
+    async def process_fill(self, fill: Fill) -> Fill | None:
+        """
+        Book ``fill``, returning it as booked (see ``Portfolio.process_fill``).
+
+        A buy that costs more than the cash on hand books only what the cash covers, and one that
+        cash covers none of books nothing. A repeated execution books nothing either.
+        """
         # Applying one execution twice invents a position the account never held.
         if fill.execution_id is not None:
             if fill.execution_id in self._applied_execution_ids:
-                return
+                return None
             self._applied_execution_ids.add(fill.execution_id)
 
         cash_before = self._cash
@@ -96,7 +103,7 @@ class BasicPortfolio(Portfolio):
         self._last_prices[fill.symbol] = float(fill.price)
         if fill.side not in (SignalType.BUY, SignalType.SELL):
             raise ValueError(f"Unsupported fill side: {fill.side}")
-        self._apply(fill)
+        booked = self._apply(fill)
 
         quantity_after = self.open_qty_by_symbol.get(fill.symbol, 0.0)
         if (
@@ -109,6 +116,14 @@ class BasicPortfolio(Portfolio):
             time_stamp=fill.time_stamp,
             prices=self._last_prices
         )
+
+        wanted = float(fill.quantity)
+        if booked <= _EPS:
+            return None
+        if booked >= wanted - _EPS:
+            return fill
+        commission = None if fill.commission is None else fill.commission * booked / wanted
+        return dataclasses.replace(fill, quantity=booked, commission=commission)
 
     async def process_cash_flow(self, flow: CashFlow) -> None:
         """Book cash a venue paid or charged on a position: realised P&L, not a fee."""
@@ -248,42 +263,56 @@ class BasicPortfolio(Portfolio):
 
     # Helpers -------
 
-    def _apply(self, fill: Fill) -> None:
+    def _apply(self, fill: Fill) -> float:
         """
-        Net a fill against the position: opening, reducing, or reversing through flat.
+        Net a fill against the position: opening, reducing, or reversing through flat. Returns
+        the quantity booked, which is less than the fill's when cash does not cover a buy.
 
         A sell with nothing to sell opens a short rather than doing nothing, which is how selling
         premium works. Margin is not modelled here — what may be shorted is a risk rule's business.
         """
         wanted = float(fill.quantity)
         if wanted <= _EPS:
-            return
+            return 0.0
         position = self._open_qty_by_symbol.get(fill.symbol, 0.0)
         signed = wanted if fill.side is SignalType.BUY else -wanted
         commission = fill.commission or 0.0
 
         if abs(position) <= _EPS or (position > 0.0) == (signed > 0.0):
-            self._open(fill, wanted, commission)
-            return
+            return self._open(fill, wanted, commission)
 
         reducing = min(wanted, abs(position))
         closed = self._close(fill, reducing, commission * reducing / wanted)
         leftover = wanted - closed
         if leftover > _EPS:
-            self._open(fill, leftover, commission * leftover / wanted)
+            closed += self._open(fill, leftover, commission * leftover / wanted)
+        return closed
 
-    def _open(self, fill: Fill, quantity: float, commission: float) -> None:
+    def _open(self, fill: Fill, quantity: float, commission: float) -> float:
+        """Open ``quantity`` of a new lot, returning how much was opened."""
         long_side = fill.side is SignalType.BUY
-        notional: float = fill.price * quantity * self._multiplier(fill.symbol)
+        unit_cost: float = fill.price * self._multiplier(fill.symbol)
+        notional: float = unit_cost * quantity
 
         if long_side and notional + commission > self._cash:
-            # The broker has filled this, so from here the two disagree on the position.
-            logger.warning(
-                "Portfolio dropped a %s buy fill it can't afford: %.6g at %.6g is %.2f "
-                "with %.2f commission, against %.2f cash",
-                fill.symbol, quantity, fill.price, notional, commission, self._cash,
+            # An order sized at one close fills at the next open, so a gap up can leave it short
+            # of cash. Book what the cash covers; the caller reports the smaller fill onwards.
+            per_unit = unit_cost + commission / quantity
+            affordable = max(0.0, self._cash) / per_unit if per_unit > 0.0 else 0.0
+            if affordable <= _EPS:
+                logger.warning(
+                    "Portfolio dropped a %s buy fill it can't afford: %.6g at %.6g is %.2f "
+                    "with %.2f commission, against %.2f cash",
+                    fill.symbol, quantity, fill.price, notional, commission, self._cash,
+                )
+                return 0.0
+            logger.info(
+                "Portfolio booked %.6g of a %.6g %s buy fill at %.6g, what %.2f cash covers",
+                affordable, quantity, fill.symbol, fill.price, self._cash,
             )
-            return
+            commission *= affordable / quantity
+            quantity = affordable
+            notional = unit_cost * quantity
 
         self._cash += (-notional if long_side else notional) - commission
         self._fees_paid += commission
@@ -300,6 +329,7 @@ class BasicPortfolio(Portfolio):
             ),
             notional=notional if long_side else -notional,
         )
+        return quantity
 
     def _close(self, fill: Fill, quantity: float, commission: float) -> float:
         """Close against existing lots, newest first, returning how much was closed."""

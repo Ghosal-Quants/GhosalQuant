@@ -1,5 +1,6 @@
 import copy
 import json
+import logging
 import subprocess
 import sys
 from datetime import datetime, timedelta
@@ -328,6 +329,82 @@ def test_run_spec_returns_a_json_ready_result_and_is_repeatable():
     assert result["metrics"]["final_equity"] == pytest.approx(result["equity"][-1]["strategy"])
     assert result["metrics"]["max_drawdown_pct"] >= 0.0
     assert run_spec(spec, frame) == result
+
+
+def _gap_up_bars() -> pd.DataFrame:
+    """Flat at 100, then a close above the SMA whose next open gaps up 5%, then a fall below it."""
+    close = [100.0] * 30 + [110.0] * 10 + [90.0] * 10 + [110.0] * 10 + [90.0] * 5
+    open_ = [close[0]] + close[:-1]
+    for i in (30, 50):  # the bar after each buy signal opens well above the close it was sized at
+        open_[i + 1] = close[i] * 1.05
+    return pd.DataFrame(
+        {"Open": open_, "High": [max(o, c) for o, c in zip(open_, close)],
+         "Low": [min(o, c) for o, c in zip(open_, close)], "Close": close, "Volume": 1e6},
+        index=pd.bdate_range("2020-01-01", periods=len(close)),
+    )
+
+
+def _gap_spec() -> dict:
+    return {**_trend_spec(5), "costs": {"spread_bps": 0.0, "commission_per_share": 0.0}}
+
+
+def _replay(trades: list[dict], capital: float, last_close: float) -> tuple[float, list[float]]:
+    cash, held, positions = capital, 0.0, []
+    for trade in trades:
+        sign = 1.0 if trade["side"] == "BUY" else -1.0
+        cash -= sign * trade["quantity"] * trade["price"]
+        held += sign * trade["quantity"]
+        positions.append(held)
+    return cash + held * last_close, positions
+
+
+def test_a_gap_up_after_a_buy_signal_still_buys_and_the_trade_list_matches_the_portfolio(caplog):
+    frame = _gap_up_bars()
+
+    with caplog.at_level(logging.INFO, logger="ghosalquant"):
+        result = run_spec(_gap_spec(), frame)
+
+    assert "can't afford" not in caplog.text
+    trades = result["trades"]
+    assert [t["side"] for t in trades] == ["BUY", "SELL", "BUY", "SELL"]
+    # Each buy spends the cash at the gapped-up open; each sell closes exactly what was bought.
+    assert trades[0]["price"] == pytest.approx(115.5)
+    assert trades[0]["quantity"] * trades[0]["price"] == pytest.approx(10_000.0)
+    assert trades[1]["quantity"] == pytest.approx(trades[0]["quantity"])
+    assert trades[3]["quantity"] == pytest.approx(trades[2]["quantity"])
+
+    final, positions = _replay(trades, 10_000.0, frame["Close"].iloc[-1])
+    assert min(positions) >= -1e-9
+    assert final == pytest.approx(result["metrics"]["final_equity"])
+
+
+def test_a_fill_the_portfolio_refuses_never_reaches_the_strategy(monkeypatch):
+    """The strategy keeps asking for the position until the portfolio really holds it."""
+    from ghosalquant.backtester import dataframe_backtester
+    from ghosalquant.portfolio.basic_portfolio import BasicPortfolio
+
+    class RefusesFirstBuy(BasicPortfolio):
+        refused: list = []
+
+        async def process_fill(self, fill):
+            if fill.side is SignalType.BUY and not self.refused:
+                self.refused.append(fill)
+                return None
+            return await super().process_fill(fill)
+
+    monkeypatch.setattr(dataframe_backtester, "BasicPortfolio", RefusesFirstBuy)
+    frame = _gap_up_bars()
+    result = run_spec(_gap_spec(), frame)
+
+    refused = RefusesFirstBuy.refused[0]
+    assert refused.time_stamp.date().isoformat() == frame.index[31].date().isoformat()
+    trades = result["trades"]
+    # Re-signalled on the bar the refusal was seen and bought at the next open instead.
+    assert trades[0]["side"] == "BUY" and trades[0]["t"] == frame.index[32].date().isoformat()
+    assert [t["side"] for t in trades] == ["BUY", "SELL", "BUY", "SELL"]
+    final, positions = _replay(trades, 10_000.0, frame["Close"].iloc[-1])
+    assert min(positions) >= -1e-9
+    assert final == pytest.approx(result["metrics"]["final_equity"])
 
 
 def test_run_spec_refuses_data_it_cannot_use():

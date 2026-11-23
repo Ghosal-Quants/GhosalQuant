@@ -200,10 +200,13 @@ class ExecutionSystem:
                 "fill", _fill_payload(fill), observed_at=fill.time_stamp
             ):
                 continue
-            await self.portfolio.process_fill(fill)
+            booked = await self.portfolio.process_fill(fill)
             self._note_snapshot(fill.time_stamp)
             self._drop_replacement_after(fill)
-            self._call_hook("on_fill", fill)
+            # Only what the portfolio booked: a strategy told of a refused fill tracks a position
+            # that does not exist, stops re-sending the order and sizes later trades against it.
+            if booked is not None:
+                self._call_hook("on_fill", booked)
         if self.journal is not None:
             self.journal.commit()
 

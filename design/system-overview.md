@@ -574,7 +574,7 @@ Risk management sits between signal generation and order execution. The `RiskMan
 1. A `Signal` is converted into a mutable `OrderDraft`.
 2. A `TARGET_WEIGHT` in the signal's metadata becomes the trade that brings the position to that share of equity,
    net of what is held and resting. A buy is capped at what `RiskContext.cash` pays for, keeping `cash_buffer`
-   (default 1%) of equity unspent for the move before it fills: the portfolio refuses a fill it can't afford.
+   (default 1%) of equity unspent for the move before it fills; a bigger move is trimmed by the portfolio (§8.1).
 3. Each `RiskRule` in the chain calls `apply(draft, context) -> bool`.
    - Rules can mutate the draft (e.g. resize quantity) or return `False` to block the order entirely.
 4. If all rules pass and the draft has a positive quantity, an immutable `Order` is created and returned. A draft
@@ -700,7 +700,7 @@ Portfolio management is defined by the `Portfolio` protocol from `ghosalquant.po
 
 ```python
 class Portfolio(Protocol):
-    async def process_fill(self, fill: Fill) -> None: ...
+    async def process_fill(self, fill: Fill) -> Fill | None: ...  # the fill as booked
     async def process_cash_flow(self, flow: CashFlow) -> None: ...                 # realised P&L, not a fee
     def mark(self, symbol: str, price: float, time_stamp: datetime) -> None: ...   # records a price, no snapshot
     def update_equity(self, bar: Bar) -> None: ...                                  # mark + snapshot
@@ -731,9 +731,15 @@ The default implementation (`ghosalquant.portfolio.basic_portfolio`). Key behavi
   on `SELL` fills using LIFO order. Supports partial closes. A fill carrying an `execution_id` is applied once and
   only once — a venue can report the same execution twice, and applying it again invents a position the account
   never held. Fills without one (a simulated broker has none) are applied as before.
-- **Unaffordable fills are refused.** A fill that opens or adds to a long position and costs more than the cash
-  balance (notional plus commission) is not booked and is logged at `WARNING`. The broker has still filled it, so
-  the two disagree from then on; sizing with `TARGET_WEIGHT` (§6.1) keeps buys within cash.
+- **A buy dearer than cash books what cash covers.** A fill that opens or adds to a long position and costs more
+  than the cash balance (notional plus commission) is booked only for the quantity cash pays for, with the
+  commission prorated, and logged at `INFO`; one cash covers none of is not booked and is logged at `WARNING`.
+  This is the usual case for a `TARGET_WEIGHT` buy sized at one close that fills after a gap up beyond
+  `cash_buffer` (§6.1).
+- **`process_fill` returns the fill as booked**: the fill itself, a smaller copy when it was trimmed, or `None` when
+  nothing was booked (refused, or a repeated `execution_id`). `ExecutionSystem` passes only that to
+  `Strategy.on_fill`, so a strategy's own position never includes shares the portfolio does not hold. A live
+  broker has still filled the whole order, so a trimmed or refused live fill leaves the two disagreeing.
 - **`fill_count`**: Fills that changed cash or a position, so a refused or duplicate fill is not counted.
   `calculate_kpms` reports it as `BacktestKPMs.fills`.
 - **Positions are signed.** A fill nets against what is held: it opens, reduces, or reverses through flat, so a
