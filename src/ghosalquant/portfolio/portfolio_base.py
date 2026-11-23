@@ -5,7 +5,12 @@ from ..core.types import Trade, EquityPoint, Fill, Bar, CashFlow
 
 
 class Portfolio(Protocol):
-    async def process_fill(self, fill: Fill) -> None:
+    async def process_fill(self, fill: Fill) -> Fill | None:
+        """
+        Book ``fill`` and return it as booked: the same fill, a smaller one when only part of it
+        could be booked, or ``None`` when none of it was. The execution system tells the strategy
+        about the returned fill only, so the strategy's position always matches the portfolio's.
+        """
         ...
 
     async def process_cash_flow(self, flow: CashFlow) -> None:

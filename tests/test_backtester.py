@@ -150,18 +150,58 @@ def test_an_unsized_signal_warns_instead_of_vanishing(caplog):
     assert "no quantity or TARGET_WEIGHT" in caplog.text
 
 
-def test_a_fill_the_portfolio_cannot_afford_is_logged(caplog):
-    portfolio = BasicPortfolio(init_capital=1_000.0)
+def test_a_buy_fill_cash_covers_none_of_is_refused_and_logged(caplog):
+    portfolio = BasicPortfolio(init_capital=0.0)
     fill = Fill(
         time_stamp=datetime(2024, 1, 2), symbol="TEST", side=SignalType.BUY, quantity=20.0, price=100.0,
     )
 
     with caplog.at_level(logging.WARNING, logger="ghosalquant.portfolio.basic_portfolio"):
-        asyncio.run(portfolio.process_fill(fill))
+        booked = asyncio.run(portfolio.process_fill(fill))
 
-    assert portfolio.cash_balance == 1_000.0
+    assert booked is None
+    assert portfolio.cash_balance == 0.0
     assert portfolio.fill_count == 0
     assert "can't afford" in caplog.text
+
+
+def test_a_buy_fill_dearer_than_cash_books_what_cash_covers(caplog):
+    """An order sized at one close and filled after a gap up must not vanish, nor overdraw cash."""
+    portfolio = BasicPortfolio(init_capital=1_000.0)
+    fill = Fill(
+        time_stamp=datetime(2024, 1, 2), symbol="TEST", side=SignalType.BUY, quantity=20.0, price=100.0,
+        commission=2.0,
+    )
+
+    with caplog.at_level(logging.WARNING, logger="ghosalquant.portfolio.basic_portfolio"):
+        booked = asyncio.run(portfolio.process_fill(fill))
+
+    # Each share costs 100 plus 0.10 commission, so 1,000 buys 1000 / 100.1 of them.
+    assert booked.quantity == pytest.approx(1_000.0 / 100.1)
+    assert booked.commission == pytest.approx(2.0 * booked.quantity / 20.0)
+    assert booked.price == fill.price and booked.time_stamp == fill.time_stamp
+    assert portfolio.open_qty_by_symbol["TEST"] == pytest.approx(booked.quantity)
+    assert portfolio.cash_balance == pytest.approx(0.0, abs=1e-9)
+    assert "can't afford" not in caplog.text
+
+    # Selling what was booked closes the position; nothing is left short.
+    sell = Fill(
+        time_stamp=datetime(2024, 1, 3), symbol="TEST", side=SignalType.SELL, quantity=booked.quantity, price=100.0,
+    )
+    assert asyncio.run(portfolio.process_fill(sell)) is sell
+    assert portfolio.open_qty_by_symbol == {}
+
+
+def test_a_repeated_execution_is_booked_once_and_reported_once():
+    portfolio = BasicPortfolio(init_capital=10_000.0)
+    fill = Fill(
+        time_stamp=datetime(2024, 1, 2), symbol="TEST", side=SignalType.BUY, quantity=5.0, price=100.0,
+        execution_id="exec-1",
+    )
+
+    assert asyncio.run(portfolio.process_fill(fill)) is fill
+    assert asyncio.run(portfolio.process_fill(fill)) is None
+    assert portfolio.open_qty_by_symbol["TEST"] == 5.0
 
 
 def test_kpms_count_a_held_position_and_its_fill():

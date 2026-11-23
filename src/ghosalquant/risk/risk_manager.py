@@ -74,7 +74,7 @@ class RiskManager:
         delta_qty = target_qty - held_qty - resting_qty
         draft.metadata[metadata_keys.TARGET_QUANTITY] = target_qty
 
-        # The portfolio refuses a fill it can't pay for, so size the buy to what cash covers.
+        # The portfolio books only what cash covers, so size the buy to that rather than overshoot.
         if delta_qty > _QTY_EPS and context.cash is not None:
             affordable = self._affordable_buy(draft.symbol, held_qty, unit_cost, equity, context)
             if affordable < delta_qty:
