@@ -482,6 +482,22 @@ def test_a_taker_arriving_between_quotes_waits_for_the_next_one():
     assert broker.open_order_views() == ()
 
 
+def test_latency_keeps_an_order_off_the_quote_it_was_decided_on():
+    """An order reaches the venue its latency after the decision and crosses the first quote from then on."""
+    broker = OrderBookSimBroker(maker_rebate_bps=0.0, taker_fee_bps=0.0, min_latency_ms=30_000, max_latency_ms=30_000)
+    broker.on_market_event(_book(0, [(99.0, 5.0)], [(100.0, 5.0)]))
+
+    broker.submit(_order(0, SignalType.BUY, 5.0, 100.5, Liquidity.TAKER))
+    assert broker.get_fills() == []
+
+    broker.on_market_event(_book(20, [(99.0, 5.0)], [(100.0, 5.0)]))  # still in flight
+    assert broker.get_fills() == []
+
+    broker.on_market_event(_book(30, [(99.5, 5.0)], [(100.5, 5.0)]))
+    assert [(f.quantity, f.price, f.time_stamp) for f in broker.get_fills()] == [(5.0, 100.5, _at(30))]
+    assert broker.open_order_views() == ()
+
+
 def test_a_taker_that_misses_its_chance_does_not_linger():
     """One quote is the whole of a taker's life: what it cannot cross there is cancelled."""
     broker = OrderBookSimBroker(maker_rebate_bps=0.0, taker_fee_bps=0.0)

@@ -244,9 +244,9 @@ class QueueAwareFill:
         book = context.book
         if resting.liquidity is Liquidity.MAKER and self.model_queue_position:
             resting.queue_ahead_quantity = _displayed_at(book, resting.side, resting.limit_price)
-        if book is not None and book.time_stamp >= resting.submitted_at:
+        if book is not None and book.time_stamp >= resting.eligible_at:
             return self._against_book(resting, self.adjusted(book), aggressor=True)
-        # No quote since the order was decided, so wait for the next one.
+        # No quote since the order reached the venue (its latency after the decision), so wait for the next one.
         resting.sweep_pending = resting.liquidity is Liquidity.TAKER
         return ()
 
